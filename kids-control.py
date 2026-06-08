@@ -20,6 +20,7 @@ TIMERBAR_PIDFILE = "/tmp/kids-timerbar.pid"
 TIMERBAR_SCRIPT  = "/home/jjejje/kids-machine/kids-timer-bar.py"
 KIOSK_SCRIPT     = "/home/jjejje/kids-machine/kids-kiosk.sh"
 LOCK_FILE        = "/tmp/kids-control.lock"
+TMUX_SESSION     = "kids-control"
 
 REFRESH = 2  # 자동 갱신 주기(초)
 
@@ -555,14 +556,40 @@ def run(scr):
                 last_ref = time.time()
 
 
+def _ensure_tmux():
+    """tmux 세션 'kids-control' 에 접속하거나 새로 만든다.
+    - 이미 tmux 안: 그냥 진행 (재귀 방지)
+    - 세션 있음: attach → 현재 프로세스가 tmux 로 교체됨 (return 없음)
+    - 세션 없음: new-session → 현재 프로세스가 tmux 로 교체됨 (return 없음)
+    - tmux 미설치: flock 폴백으로 진행
+    """
+    if os.environ.get("TMUX"):
+        return  # 이미 tmux 안 → 정상 진행
+
+    if subprocess.run(["which", "tmux"], capture_output=True).returncode != 0:
+        return  # tmux 없음 → flock 폴백
+
+    has = subprocess.run(["tmux", "has-session", "-t", TMUX_SESSION],
+                         capture_output=True).returncode == 0
+    if has:
+        # 기존 세션에 접속 — os.execlp 는 현재 프로세스를 tmux 로 교체
+        os.execlp("tmux", "tmux", "attach-session", "-t", TMUX_SESSION)
+    else:
+        # 새 세션 생성 후 이 스크립트를 그 안에서 실행
+        os.execlp("tmux", "tmux", "new-session", "-s", TMUX_SESSION,
+                  sys.executable, os.path.abspath(__file__))
+
+
 def main():
+    _ensure_tmux()  # 항상 tmux 세션 안에서 실행 (tmux 있을 때)
+
+    # tmux 없는 환경의 폴백: flock 으로 단일 인스턴스 강제
     if not _acquire_lock():
         try:
             pid = open(LOCK_FILE).read().strip()
         except Exception:
             pid = "?"
         print(f"kids-control 이 이미 실행 중입니다. (PID {pid})", file=sys.stderr)
-        print("종료하려면 해당 터미널에서 q 를 누르세요.", file=sys.stderr)
         sys.exit(1)
     try:
         curses.wrapper(run)
