@@ -70,6 +70,14 @@ def _ff_pid():
     return int(pids[0]) if pids else None
 
 
+def _endscreen_pid():
+    """kids-end-screen.py 프로세스 PID (없으면 None)"""
+    r = subprocess.run(["pgrep", "-f", "kids-end-screen"],
+                       capture_output=True, text=True)
+    pids = [p for p in r.stdout.strip().split() if p]
+    return int(pids[0]) if pids else None
+
+
 def _marionette_up():
     try:
         s = socket.create_connection(("127.0.0.1", 2828), timeout=0.5)
@@ -84,6 +92,7 @@ def gather():
     status = _read_json(STATUS_FILE)
     ff_pid = _ff_pid()
     ap_pid = _pid_alive(AUTOPLAY_PIDFILE)
+    es_pid = _endscreen_pid()
 
     remaining = None
     if state.get("end_ts"):
@@ -98,6 +107,8 @@ def gather():
         running   = ff_pid is not None,
         ff_pid    = ff_pid,
         ap_pid    = ap_pid,
+        endscreen = es_pid is not None,
+        es_pid    = es_pid,
         marionette= _marionette_up(),
         autoplay  = state.get("autoplay", False),
         minutes   = state.get("minutes"),
@@ -125,6 +136,29 @@ def send_cmd(cmd):
 
 def kill_kiosk():
     subprocess.run(["pkill", "-f", "youtubekids.com"], check=False)
+
+
+def dismiss_endscreen():
+    """종료화면을 닫는다 — SIGTERM → _exit() → 키보드 그랩 해제 후 종료."""
+    pid = _endscreen_pid()
+    if pid:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+
+def extend_session(scr):
+    """종료화면을 닫고 새 세션을 시작한다.
+    입력 폼을 먼저 받은 뒤 종료화면을 닫아 아이가 화면이 닫히는 것을 최소한으로 본다."""
+    params = ask_start_params(scr)
+    if not params:
+        return None
+    minutes, autoplay, sat = params
+    dismiss_endscreen()
+    time.sleep(1.5)  # kids-kiosk.sh 정리 완료 대기
+    start_kiosk(minutes, autoplay, sat)
+    return params
 
 
 def _x11_env():
@@ -368,6 +402,9 @@ def draw(scr, s, last_ref, msg, msg_until):
     if s["running"]:
         wr(r, 2, "● RUNNING", C_OK | curses.A_BOLD)
         wr(r, 14, f"(Firefox PID {s['ff_pid']})", DIM)
+    elif s["endscreen"]:
+        wr(r, 2, "⏹  END SCREEN", C_WARN | curses.A_BOLD)
+        wr(r, 18, f"(PID {s['es_pid']}) — 시청 시간 종료", DIM)
     else:
         wr(r, 2, "○ STOPPED", C_WARN | curses.A_BOLD)
     r += 1
@@ -441,6 +478,12 @@ def draw(scr, s, last_ref, msg, msg_until):
             ("[r] 새로고침",      True),
             ("[q] UI 종료",       True),
         ]
+    elif s["endscreen"]:
+        ROW1 = [
+            ("[e] 시간 연장 + 재시작", True),
+            ("[d] 종료화면 닫기",      True),
+        ]
+        ROW2 = [("[r] 새로고침", True), ("[q] UI 종료", True)]
     else:
         ROW1 = [("[o] 키오스크 시작", True)]
         ROW2 = [("[r] 새로고침", True), ("[q] UI 종료", True)]
@@ -554,6 +597,22 @@ def run(scr):
                 msg, msg_until = "→ 키오스크 종료 신호 전달됨", time.time() + 5
                 s = gather()
                 last_ref = time.time()
+        elif ch == ord("d") and s["endscreen"]:
+            dismiss_endscreen()
+            msg, msg_until = "→ 종료화면 닫기 — 잠시 기다려주세요", time.time() + 5
+            time.sleep(0.8)
+            s = gather(); last_ref = time.time()
+        elif ch == ord("e") and s["endscreen"]:
+            result = extend_session(scr)
+            if result:
+                minutes, autoplay, _ = result
+                label = "ON" if autoplay else "OFF"
+                msg = f"→ 재시작: {minutes}분, 자동재생 {label} — 잠시 기다려주세요"
+                msg_until = time.time() + 8
+            else:
+                msg, msg_until = "취소됨", time.time() + 2
+            time.sleep(1.5)
+            s = gather(); last_ref = time.time()
 
 
 def _ensure_tmux():

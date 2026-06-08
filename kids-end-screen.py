@@ -29,6 +29,8 @@ class EndScreen:
         self._grab_keyboard()
 
         signal.signal(signal.SIGCONT, self._handle_sigcont)
+        # 원격 제어(kids-control.py)에서 SIGTERM 으로 종료 요청 시 그랩을 해제하고 닫는다
+        signal.signal(signal.SIGTERM, lambda sig, frm: self.win.after(0, self._exit))
 
         self.win.after(100, self._poll)
         self.win.after(3000, self._heartbeat)
