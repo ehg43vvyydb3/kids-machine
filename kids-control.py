@@ -18,6 +18,7 @@ AUTOPLAY_PIDFILE = "/tmp/kids-autoplay.pid"
 TIMER_PIDFILE    = "/tmp/kids-kiosk-timer.pid"
 TIMERBAR_PIDFILE = "/tmp/kids-timerbar.pid"
 TIMERBAR_SCRIPT  = "/home/jjejje/kids-machine/kids-timer-bar.py"
+KIOSK_SCRIPT     = "/home/jjejje/kids-machine/kids-kiosk.sh"
 
 REFRESH = 2  # 자동 갱신 주기(초)
 
@@ -104,6 +105,135 @@ def send_cmd(cmd):
 
 def kill_kiosk():
     subprocess.run(["pkill", "-f", "youtubekids.com"], check=False)
+
+
+def _x11_env():
+    """실행 중인 X 세션의 DISPLAY/XAUTHORITY 환경변수를 추출한다."""
+    env = {"DISPLAY": ":0"}
+    for name in ["xfce4-session", "xfwm4", "Xorg"]:
+        r = subprocess.run(["pgrep", "-x", name], capture_output=True, text=True)
+        pid = r.stdout.strip().split("\n")[0].strip()
+        if not pid:
+            continue
+        try:
+            with open(f"/proc/{pid}/environ", "rb") as f:
+                for item in f.read().split(b"\0"):
+                    s = item.decode("utf-8", errors="ignore")
+                    if s.startswith("XAUTHORITY="):
+                        env["XAUTHORITY"] = s.split("=", 1)[1]
+                        return env
+        except Exception:
+            continue
+    return env
+
+
+def start_kiosk(minutes, autoplay, saturation):
+    """키오스크를 SSH 세션과 독립된 프로세스로 시작한다."""
+    env = {**os.environ, **_x11_env()}
+    subprocess.Popen(
+        ["bash", KIOSK_SCRIPT,
+         str(minutes), "True" if autoplay else "False", str(saturation)],
+        env=env, close_fds=True, start_new_session=True,
+        stdout=open("/tmp/kids-kiosk-start.log", "w"),
+        stderr=subprocess.STDOUT,
+    )
+
+
+def _readline(scr, row, col, maxlen=6, default=""):
+    """curses 한 줄 입력. Enter→완료, ESC→None."""
+    buf = list(default)
+    scr.addstr(row, col, default.ljust(maxlen, "░"))
+    scr.move(row, col + len(buf))
+    scr.refresh()
+    scr.nodelay(False)
+    while True:
+        ch = scr.getch()
+        if ch == 27:
+            scr.nodelay(True)
+            return None
+        elif ch in (10, 13):
+            scr.nodelay(True)
+            return "".join(buf) if buf else default
+        elif ch in (curses.KEY_BACKSPACE, 127, 8):
+            if buf:
+                buf.pop()
+                pos = col + len(buf)
+                scr.addstr(row, pos, "░" * (maxlen - len(buf)))
+                scr.move(row, pos)
+        elif 32 <= ch < 127 and len(buf) < maxlen:
+            buf.append(chr(ch))
+            scr.addch(row, col + len(buf) - 1, chr(ch))
+            scr.addstr(row, col + len(buf), "░" * (maxlen - len(buf)))
+            scr.move(row, col + len(buf))
+        scr.refresh()
+
+
+def ask_start_params(scr):
+    """키오스크 시작 파라미터를 curses 화면에서 입력받는다.
+    반환: (minutes, autoplay, saturation) 또는 None(취소)"""
+    scr.erase()
+    h, w = scr.getmaxyx()
+    C1 = curses.color_pair(1)
+    C3 = curses.color_pair(3)
+
+    scr.addstr(0, 0, "─" * (w - 1), C1)
+    title = "  키오스크 시작 설정  "
+    scr.addstr(0, max(0, (w - len(title)) // 2), title, C1 | curses.A_BOLD)
+    scr.addstr(2, 2, "ESC: 취소   Enter: 확인", curses.A_DIM)
+
+    def ask_int(row, prompt, default, lo, hi):
+        scr.addstr(row, 2, prompt)
+        scr.refresh()
+        curses.curs_set(1)
+        raw = _readline(scr, row, 2 + len(prompt), maxlen=4, default=str(default))
+        curses.curs_set(0)
+        if raw is None:
+            return None
+        try:
+            v = int(raw)
+            return max(lo, min(hi, v))
+        except ValueError:
+            return default
+
+    # 시청 시간
+    minutes = ask_int(4, "시청 시간 (분, 1-300) : ", 30, 1, 300)
+    if minutes is None:
+        return None
+
+    # 자동재생
+    scr.addstr(6, 2, "자동재생? [Y/n] : ")
+    scr.refresh()
+    autoplay = True
+    while True:
+        ch = scr.getch()
+        if ch == 27:
+            return None
+        elif ch in (ord("n"), ord("N")):
+            autoplay = False
+            scr.addstr(6, 2 + len("자동재생? [Y/n] : "), "n")
+            break
+        elif ch in (ord("y"), ord("Y"), 10, 13):
+            scr.addstr(6, 2 + len("자동재생? [Y/n] : "), "y")
+            break
+        scr.refresh()
+
+    # 채도
+    saturation = ask_int(8, "채도 (0-100, 기본 100) : ", 100, 0, 100)
+    if saturation is None:
+        return None
+
+    # 최종 확인
+    scr.addstr(10, 2,
+               f"▶ {minutes}분, 자동재생={'ON' if autoplay else 'OFF'}, 채도={saturation}%",
+               C3 | curses.A_BOLD)
+    scr.addstr(11, 2, "시작: Enter   취소: ESC")
+    scr.refresh()
+    while True:
+        ch = scr.getch()
+        if ch == 27:
+            return None
+        elif ch in (10, 13):
+            return (minutes, autoplay, saturation)
 
 
 def adjust_time(delta_minutes):
@@ -278,18 +408,22 @@ def draw(scr, s, last_ref, msg, msg_until):
         wr(max(r + 1, h - 6), 2, msg, C_WARN | curses.A_BOLD)
 
     # ── 푸터 (두 줄) ───────────────────────────────────────────────────────────
-    ROW1 = [  # 재생·시간 제어
-        ("[s] 다음 영상",     s["running"] and bool(s["ap_pid"])),
-        ("[p] 일시정지/재생", s["running"] and bool(s["ap_pid"])),
-        ("[f] 전체화면",      s["running"] and bool(s["ap_pid"])),
-        ("[=] +10분",         s["running"]),
-        ("[-] -10분",         s["running"]),
-    ]
-    ROW2 = [  # 시스템
-        ("[k] 키오스크 종료", s["running"]),
-        ("[r] 새로고침",      True),
-        ("[q] UI 종료",       True),
-    ]
+    if s["running"]:
+        ROW1 = [
+            ("[s] 다음 영상",     bool(s["ap_pid"])),
+            ("[p] 일시정지/재생", bool(s["ap_pid"])),
+            ("[f] 전체화면",      bool(s["ap_pid"])),
+            ("[=] +10분",         True),
+            ("[-] -10분",         True),
+        ]
+        ROW2 = [
+            ("[k] 키오스크 종료", True),
+            ("[r] 새로고침",      True),
+            ("[q] UI 종료",       True),
+        ]
+    else:
+        ROW1 = [("[o] 키오스크 시작", True)]
+        ROW2 = [("[r] 새로고침", True), ("[q] UI 종료", True)]
     frow = h - 4
     try:
         scr.addstr(frow, 0, "─" * (w - 1), C_HDR)
@@ -384,6 +518,16 @@ def run(scr):
             result = adjust_time(-10)
             msg, msg_until = result, time.time() + 4
             s = gather(); last_ref = time.time()
+        elif ch == ord("o") and not s["running"]:
+            params = ask_start_params(scr)
+            if params:
+                minutes, autoplay, sat = params
+                start_kiosk(minutes, autoplay, sat)
+                label = "ON" if autoplay else "OFF"
+                msg = f"→ 키오스크 시작 ({minutes}분, 자동재생 {label}) — 잠시 기다려주세요"
+                msg_until = time.time() + 8
+                time.sleep(1.5)
+                s = gather(); last_ref = time.time()
         elif ch == ord("k") and s["running"]:
             if confirm_kill(scr):
                 kill_kiosk()

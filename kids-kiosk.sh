@@ -15,10 +15,17 @@ cleanup_pointer() {
 }
 
 # 시간 입력 + 자동재생 여부
-DIALOG=$(python3 /home/jjejje/kids-machine/kids-input-dialog.py) || exit 1
-MINUTES=$(echo "$DIALOG" | cut -d, -f1)
-AUTOPLAY=$(echo "$DIALOG" | cut -d, -f2)  # True or False
-SATURATION=$(echo "$DIALOG" | cut -d, -f3)  # 0-100
+# 인자를 직접 받으면(kids-control.py 원격 시작) 다이얼로그를 생략한다.
+if [ $# -ge 3 ]; then
+    MINUTES="$1"
+    AUTOPLAY="$2"   # True or False
+    SATURATION="$3" # 0-100
+else
+    DIALOG=$(python3 /home/jjejje/kids-machine/kids-input-dialog.py) || exit 1
+    MINUTES=$(echo "$DIALOG" | cut -d, -f1)
+    AUTOPLAY=$(echo "$DIALOG" | cut -d, -f2)  # True or False
+    SATURATION=$(echo "$DIALOG" | cut -d, -f3)  # 0-100
+fi
 
 # 세션 상태 파일 기록 (kids-control.py 가 읽음)
 python3 -c "
