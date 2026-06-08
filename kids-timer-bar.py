@@ -41,7 +41,13 @@ def main():
     if len(sys.argv) < 2:
         sys.exit(1)
 
-    total_sec = int(sys.argv[1]) * 60
+    # '--end-ts <timestamp>' 모드: kids-control.py 가 시간 조정 후 재시작할 때 사용
+    if sys.argv[1] == "--end-ts":
+        end_ts    = float(sys.argv[2])
+        total_sec = max(1.0, end_ts - time.time())
+    else:
+        total_sec = int(sys.argv[1]) * 60
+        end_ts    = time.time() + total_sec
 
     root = tk.Tk()
     root.overrideredirect(True)
@@ -58,10 +64,8 @@ def main():
     root.update()
     set_always_on_top(root)
 
-    t0 = time.time()
-
     def tick():
-        rem = max(0.0, total_sec - (time.time() - t0))
+        rem = max(0.0, end_ts - time.time())
         ratio = rem / total_sec
         bw = int(sw * ratio)
 

@@ -75,6 +75,7 @@ echo $! > "$TIMER_PIDFILE"
 # 타임리미트 바 (화면 상단)
 python3 /home/jjejje/kids-machine/kids-timer-bar.py "$MINUTES" &
 TIMERBAR_PID=$!
+echo "$TIMERBAR_PID" > /tmp/kids-timerbar.pid
 
 # Firefox 키오스크 실행 (VA-API 하드웨어 디코딩 + Marionette 자동화 활성화)
 MOZ_X11_EGL=1 MOZ_DISABLE_RDD_SANDBOX=1 LIBVA_DRIVER_NAME=iHD \
@@ -129,5 +130,6 @@ if [ -f "$TIMER_FLAG" ]; then
 fi
 
 rm -f "$TIMER_PIDFILE" "$GRAB_PIDFILE" \
-      /tmp/kids-autoplay.pid /tmp/kids-kiosk-state.json \
+      /tmp/kids-autoplay.pid /tmp/kids-timerbar.pid \
+      /tmp/kids-kiosk-state.json \
       /tmp/kids-autoplay-status.json /tmp/kids-autoplay-cmd
