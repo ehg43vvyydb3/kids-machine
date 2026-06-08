@@ -78,6 +78,57 @@ To re-enable a locked touchpad/mouse from the parent account:
 sudo ./unlock-input.sh   # switch TTY: Ctrl+Alt+F3 → log in → run → Ctrl+Alt+F1
 ```
 
+### Remote control (SSH)
+
+`kids-control.py` is a terminal UI you can run from any machine that has SSH
+access to the kiosk host.
+
+```bash
+ssh user@kiosk-host python3 /home/jjejje/kids-machine/kids-control.py
+```
+
+The first invocation starts a **tmux** session named `kids-control`.
+Every subsequent call (from any SSH session) **re-attaches** to that same
+session — there is never more than one control instance running.
+
+```
+─────────────────  Kids Kiosk Control  ─────────────── 09:41:23
+  ● RUNNING  (Firefox PID 12345)
+  Marionette ✓  자동재생 ON (PID 12399)
+
+  세션 남은 시간: 18분 44초
+
+  영상 ID: abc123XYZ
+  ▶  재생 중
+  [████████░░░░░░░░░░░░░░░░░░░░] 03:12 / 11:05  (29%)
+  예약 풀: 47개
+
+─────────────────────────────────────────────────────
+  [s] 다음 영상   [p] 일시정지/재생   [f] 전체화면   [=] +10분   [-] -10분
+  [k] 키오스크 종료   [r] 새로고침   [q] UI 종료
+```
+
+**Key bindings:**
+
+| Key | Action | Available when |
+|-----|---------|---------------|
+| `s` | Skip to next video | Autoplay running |
+| `p` | Pause / resume | Autoplay running |
+| `f` | Re-enter fullscreen | Autoplay running |
+| `=` / `+` | Add 10 minutes | Kiosk running |
+| `-` | Subtract 10 minutes | Kiosk running |
+| `k` | Kill the kiosk (with confirmation) | Kiosk running |
+| `o` | Start kiosk (opens setup form) | Kiosk stopped |
+| `e` | Extend time + restart (end screen) | End screen showing |
+| `d` | Dismiss end screen | End screen showing |
+| `r` | Refresh status | Always |
+| `q` | Quit the control UI | Always |
+
+**End-screen control:** when time is up the kiosk shows an "all done" screen
+with the keyboard still grabbed. `kids-control` detects this state and shows
+`[e]` / `[d]` options. `e` asks for new parameters, then sends SIGTERM to the
+end screen (which cleanly releases the keyboard grab) and starts a fresh kiosk.
+
 ### How autoplay works
 
 `kids-autoplay.py` is a minimal, dependency-free Marionette client (TCP `2828`).
@@ -94,10 +145,11 @@ closes, the Marionette connection drops and the loop exits cleanly.
 |------|------|
 | `kids-kiosk.sh` | Main interactive launcher (dialog → timer → kiosk → lock → end screen). |
 | `kids-autoplay.py` | Marionette autoplay loop: pick a video, auto-advance when it ends. |
+| `kids-control.py` | SSH remote control TUI — monitor, skip, pause, adjust time, start/stop kiosk, dismiss end screen. |
 | `setup-kids-login.sh` | One-time Google login + parent/child setup in the kiosk profile. |
 | `kids-input-dialog.py` | Tk dialog: minutes / autoplay checkbox / saturation slider. |
 | `kids-timer-bar.py` | Always-on-top top-screen countdown bar. |
-| `kids-end-screen.py` | "Time's up" screen; stays grabbed, closes only on Ctrl+Alt+K. |
+| `kids-end-screen.py` | "Time's up" screen; stays grabbed, closes only on Ctrl+Alt+K or remote SIGTERM. |
 | `kids-kb-grabber.py` | Keyboard grab; volume keys, screenshot ('p'), Ctrl+Alt+K exit. |
 | `kids-kiosk-exit.sh` | Timer-expiry hook: flag + quit Firefox. |
 | `install.sh` | Creates the `kids` account and registers autostart. |
@@ -177,6 +229,39 @@ sudo bash install.sh
 sudo ./unlock-input.sh   # TTY 전환: Ctrl+Alt+F3 → 로그인 → 실행 → Ctrl+Alt+F1
 ```
 
+### 원격 제어 (SSH)
+
+`kids-control.py`는 키오스크 호스트에 SSH로 접속한 어느 머신에서도 실행할 수 있는
+터미널 UI입니다.
+
+```bash
+ssh user@kiosk-host python3 /home/jjejje/kids-machine/kids-control.py
+```
+
+최초 실행 시 `kids-control` 이름의 **tmux** 세션을 만들고, 이후 실행 시에는
+**기존 세션에 재접속**합니다 — 인스턴스는 항상 하나만 존재합니다.
+
+**키 바인딩:**
+
+| 키 | 동작 | 사용 가능 상태 |
+|----|------|--------------|
+| `s` | 다음 영상으로 건너뜀 | 자동재생 실행 중 |
+| `p` | 일시정지 / 재생 | 자동재생 실행 중 |
+| `f` | 전체화면 재진입 | 자동재생 실행 중 |
+| `=` / `+` | +10분 | 키오스크 실행 중 |
+| `-` | −10분 | 키오스크 실행 중 |
+| `k` | 키오스크 종료 (확인 필요) | 키오스크 실행 중 |
+| `o` | 키오스크 시작 (설정 폼 입력) | 키오스크 정지 상태 |
+| `e` | 시간 연장 + 재시작 | 종료화면 표시 중 |
+| `d` | 종료화면 닫기 | 종료화면 표시 중 |
+| `r` | 상태 새로고침 | 항상 |
+| `q` | 제어 UI 종료 | 항상 |
+
+**종료화면 제어:** 시간이 다 되면 키보드 그랩이 유지된 채 종료화면이 뜹니다.
+`kids-control`이 이 상태를 감지해 `[e]` / `[d]` 키를 표시합니다.
+`e`는 새 파라미터를 입력받은 뒤 종료화면에 SIGTERM을 보내(키보드 그랩 해제 후 닫힘)
+새 키오스크를 시작합니다.
+
 ### 자동재생 동작 방식
 
 `kids-autoplay.py`는 외부 의존성 없는 최소 Marionette 클라이언트(TCP `2828`)입니다.
@@ -192,10 +277,11 @@ Marionette 연결이 끊겨 루프가 깔끔하게 종료됩니다.
 |------|------|
 | `kids-kiosk.sh` | 메인 대화형 실행기(다이얼로그 → 타이머 → 키오스크 → 잠금 → 종료화면). |
 | `kids-autoplay.py` | Marionette 자동재생 루프: 영상 선택, 끝나면 다음 영상 자동 전환. |
+| `kids-control.py` | SSH 원격 제어 TUI — 모니터링, 건너뜀, 일시정지, 시간 조정, 시작/종료, 종료화면 제어. |
 | `setup-kids-login.sh` | 키오스크 프로필에서 최초 1회 구글 로그인 + 부모/아이 설정. |
 | `kids-input-dialog.py` | Tk 다이얼로그: 시간 / 자동재생 체크 / 채도 슬라이더. |
 | `kids-timer-bar.py` | 항상 위에 뜨는 상단 카운트다운 바. |
-| `kids-end-screen.py` | "시청 종료" 화면; 그랩 유지, Ctrl+Alt+K로만 닫힘. |
+| `kids-end-screen.py` | "시청 종료" 화면; 그랩 유지, Ctrl+Alt+K 또는 원격 SIGTERM으로 닫힘. |
 | `kids-kb-grabber.py` | 키보드 그랩; 볼륨키, 스크린샷('p'), Ctrl+Alt+K 종료. |
 | `kids-kiosk-exit.sh` | 타이머 만료 훅: 플래그 + Firefox 종료. |
 | `install.sh` | `kids` 계정 생성 및 autostart 등록. |
