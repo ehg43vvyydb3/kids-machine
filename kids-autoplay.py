@@ -108,6 +108,33 @@ walk(document);
 return out;
 """
 
+# YouTube 플레이어를 전체화면으로 전환(옆 추천 썸네일을 가린다).
+# 'f' 키와 동일한 효과인 풀스크린 버튼을 우선 클릭하고, 없으면 video 자체를 풀스크린.
+# (user.js의 full-screen-api.allow-trusted-requests-only=false 로 제스처 없이 허용)
+FULLSCREEN_JS = r"""
+function deep(sel) {
+  function walk(root) {
+    let el; try { el = root.querySelector(sel); } catch (e) { return null; }
+    if (el) return el;
+    let kids; try { kids = root.querySelectorAll('*'); } catch (e) { return null; }
+    for (const e of kids) { if (e.shadowRoot) { const r = walk(e.shadowRoot); if (r) return r; } }
+    return null;
+  }
+  return walk(document);
+}
+if (document.fullscreenElement) return 'already';
+const btn = deep('.ytp-fullscreen-button');
+if (btn) { try { btn.click(); return 'button'; } catch (e) {} }
+function fv(root) {
+  const v = root.querySelector('video'); if (v) return v;
+  for (const e of root.querySelectorAll('*')) { if (e.shadowRoot) { const r = fv(e.shadowRoot); if (r) return r; } }
+  return null;
+}
+const v = fv(document);
+if (v && v.requestFullscreen) { try { v.requestFullscreen(); return 'video'; } catch (e) { return 'err'; } }
+return 'none';
+"""
+
 # watch 페이지에서 <video> 의 상태를 본다(+막혀 있으면 play() 한번 시도).
 # nudge=true 일 때만 재생을 떠밀어, 아이가 일시정지한 영상은 다시 안 튼다.
 VIDEO_STATE_JS = r"""
@@ -159,15 +186,41 @@ def pick(pool, recent):
     return random.choice(candidates)
 
 
+def go_fullscreen(m):
+    """YouTube 플레이어를 전체화면으로 — 옆 추천 썸네일을 가린다.
+    navigate 할 때마다 풀스크린이 풀리므로 영상마다 다시 호출한다."""
+    for _ in range(5):
+        try:
+            r = m.execute_script(FULLSCREEN_JS)
+        except IOError:
+            raise
+        except Exception:
+            r = None
+        if r in ("already", "button", "video"):
+            time.sleep(0.6)
+            try:
+                if m.execute_script("return !!document.fullscreenElement;"):
+                    return True
+            except IOError:
+                raise
+            except Exception:
+                pass
+        time.sleep(0.6)
+    return False
+
+
 def start_playing(m, url):
-    """watch 페이지로 이동하고 실제 재생이 시작될 때까지 몇 번 떠민다."""
+    """watch 페이지로 이동하고 실제 재생이 시작될 때까지 몇 번 떠민 뒤, 전체화면으로."""
     m.navigate(url)
+    playing = False
     for _ in range(8):
         st = video_state(m, nudge=True)
         if st.get("ok") and not st.get("paused"):
-            return True
+            playing = True
+            break
         time.sleep(1)
-    return False
+    go_fullscreen(m)
+    return playing
 
 
 def monitor_until_done(m, max_stall=40):
