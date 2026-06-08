@@ -4,3 +4,7 @@
 # editor / OS cruft
 *.swp
 *~
+
+# python
+__pycache__/
+*.pyc

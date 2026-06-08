@@ -5,20 +5,6 @@ GRAB_PIDFILE="/tmp/kids-kb-grabber.pid"
 POINTER_IDFILE="/tmp/kids-pointer-ids.txt"
 TIMER_FLAG="/tmp/kids-timer-ended"
 
-# 1920x1080 기준 유튜브 키즈 썸네일 중심 좌표 (상단 두 줄 총 8개)
-# 실제 레이아웃과 다를 경우 아래 배열만 조정
-THUMB_X=(330 750 1170 1590)
-THUMB_Y=(280 510)
-
-autoplay_click() {
-    local col=$(( RANDOM % ${#THUMB_X[@]} ))
-    local row=$(( RANDOM % ${#THUMB_Y[@]} ))
-    local x=${THUMB_X[$col]}
-    local y=${THUMB_Y[$row]}
-    xdotool mousemove --sync "$x" "$y"
-    xdotool click 1
-}
-
 cleanup_pointer() {
     if [ -f "$POINTER_IDFILE" ]; then
         while read id; do
@@ -54,6 +40,8 @@ user_pref("media.hardware-video-decoding.force-enabled", true);
 user_pref("gfx.webrender.all", true);
 user_pref("media.rdd-vpx.enabled", false);
 user_pref("media.av1.enabled", false);
+user_pref("media.autoplay.default", 0);
+user_pref("media.autoplay.blocking_policy", 0);
 user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("browser.startup.homepage_override.mstone", "ignore");
 user_pref("browser.sessionstore.resume_from_crash", false);
@@ -76,22 +64,18 @@ echo $! > "$TIMER_PIDFILE"
 python3 /home/jjejje/kids-machine/kids-timer-bar.py "$MINUTES" &
 TIMERBAR_PID=$!
 
-# Firefox 키오스크 실행 (VA-API 하드웨어 디코딩 활성화)
+# Firefox 키오스크 실행 (VA-API 하드웨어 디코딩 + Marionette 자동화 활성화)
 MOZ_X11_EGL=1 MOZ_DISABLE_RDD_SANDBOX=1 LIBVA_DRIVER_NAME=iHD \
-    firefox --profile "$KIDS_PROFILE" --kiosk "https://www.youtubekids.com/?hl=ko" &
+    firefox --profile "$KIDS_PROFILE" --marionette --kiosk "https://www.youtubekids.com/?hl=ko" &
 FF_PID=$!
 
-# Firefox 로딩 대기: FF 창 타이틀에서 YouTube 감지 후 썸네일 렌더링 대기
+# 자동재생: 화면 좌표 클릭 대신 Marionette로 DOM을 보고 영상을 골라 재생.
+# 백그라운드로 띄워 두면 영상이 끝날 때마다 다음 영상을 골라 계속 넘긴다.
+# (홈 로딩/썸네일 대기는 kids-autoplay.py 내부에서 처리, FF 종료 시 스스로 종료)
+AUTOPLAY_PID=""
 if [ "$AUTOPLAY" = "True" ]; then
-    for _ in $(seq 1 30); do
-        sleep 1
-        WID=$(xdotool search --pid "$FF_PID" --name "" 2>/dev/null | head -1)
-        TITLE=""
-        [ -n "$WID" ] && TITLE=$(xdotool getwindowname "$WID" 2>/dev/null || true)
-        echo "$TITLE" | grep -qi "youtube" && break
-    done
-    sleep 4
-    autoplay_click
+    python3 /home/jjejje/kids-machine/kids-autoplay.py &
+    AUTOPLAY_PID=$!
 fi
 
 # 키보드 그랩 시작
@@ -100,6 +84,9 @@ echo $! > "$GRAB_PIDFILE"
 
 # Firefox 종료 대기
 wait $FF_PID
+
+# 자동재생 루프 종료(FF가 닫히면 스스로 끝나지만 안전하게 정리)
+[ -n "$AUTOPLAY_PID" ] && kill "$AUTOPLAY_PID" 2>/dev/null
 
 # 타이머를 가장 먼저 종료 (플래그 생성 전에 막아야 함)
 kill "$(cat "$TIMER_PIDFILE" 2>/dev/null)" 2>/dev/null
