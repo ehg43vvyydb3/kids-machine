@@ -6,19 +6,23 @@ YouTube Kids 자동재생 — Firefox Marionette(내장 자동화)로 DOM을 보
 전제: firefox 를 `--marionette` 로 띄워 둔 상태(기본 포트 2828).
 동작:
   1) 홈이 로딩되어 썸네일이 뜰 때까지 기다린 뒤, 영상 풀(pool)을 모은다.
-  2) 무작위로 하나를 골라 watch 페이지로 이동(=자동재생)한다.
+  2) 무작위로 하나를 골라 watch 페이지로 이동(=자동재생 + 전체화면).
   3) 영상이 끝나면 다음 영상을 골라 넘긴다. (계속 살아 있는 루프)
      - 재생 중 watch 페이지의 추천 썸네일을 풀에 계속 보충한다.
      - 아이가 일시정지하면 그 영상은 그대로 둔다(끝나야 다음으로 넘어감).
      - 로딩 실패 등으로 재생이 한참 멈춰 있으면 다음 영상으로 건너뛴다.
+  4) /tmp/kids-autoplay-cmd 파일을 주기적으로 확인해 skip/pause/resume/fullscreen
+     명령을 처리한다 (kids-control.py 가 기록하는 파일 IPC).
 
 Firefox 가 닫히면(Marionette 연결 끊김) 조용히 종료한다.
 종료코드: 0 정상 종료 / 1 영상을 끝내 못 찾음
 """
-import socket, json, sys, time, random
+import socket, json, os, sys, time, random
 from collections import deque
 
-HOST, PORT = "127.0.0.1", 2828
+HOST, PORT   = "127.0.0.1", 2828
+STATUS_FILE  = "/tmp/kids-autoplay-status.json"
+CMD_FILE     = "/tmp/kids-autoplay-cmd"
 
 
 class Marionette:
@@ -38,7 +42,7 @@ class Marionette:
         while time.time() < end:
             try:
                 return socket.create_connection((host, port), timeout=5)
-            except OSError as e:  # 포트가 아직 안 열렸을 수 있음 → 재시도
+            except OSError as e:
                 last = e
                 time.sleep(0.5)
         raise IOError("Marionette 포트(%s:%d) 접속 실패: %s" % (host, port, last))
@@ -53,7 +57,6 @@ class Marionette:
         return out
 
     def _read_frame(self):
-        # 프레이밍: "<바이트길이>:<json>"
         length = b""
         while True:
             c = self._recv_n(1)
@@ -66,7 +69,7 @@ class Marionette:
         self._id += 1
         payload = json.dumps([0, self._id, command, params or {}]).encode("utf-8")
         self.sock.sendall(b"%d:%s" % (len(payload), payload))
-        resp = self._read_frame()  # [1, id, error, result]
+        resp = self._read_frame()
         if not isinstance(resp, list) or len(resp) < 4:
             raise IOError("예상치 못한 응답: %r" % (resp,))
         err, result = resp[2], resp[3]
@@ -108,9 +111,30 @@ walk(document);
 return out;
 """
 
-# YouTube 플레이어를 전체화면으로 전환(옆 추천 썸네일을 가린다).
-# 'f' 키와 동일한 효과인 풀스크린 버튼을 우선 클릭하고, 없으면 video 자체를 풀스크린.
-# (user.js의 full-screen-api.allow-trusted-requests-only=false 로 제스처 없이 허용)
+# watch 페이지에서 <video> 의 상태를 본다.
+VIDEO_STATE_JS = r"""
+const nudge = arguments[0];
+function findVideo(root) {
+  const v = root.querySelector('video');
+  if (v) return v;
+  for (const el of root.querySelectorAll('*')) {
+    if (el.shadowRoot) { const r = findVideo(el.shadowRoot); if (r) return r; }
+  }
+  return null;
+}
+const v = findVideo(document);
+if (!v) return {ok: 0};
+if (nudge && v.paused && !v.ended) { try { v.play(); } catch (e) {} }
+return {
+  ok: 1,
+  ended: !!v.ended,
+  ct: v.currentTime || 0,
+  dur: (isFinite(v.duration) ? v.duration : 0),
+  paused: !!v.paused
+};
+"""
+
+# YouTube 플레이어를 전체화면으로 전환한다.
 FULLSCREEN_JS = r"""
 function deep(sel) {
   function walk(root) {
@@ -135,30 +159,68 @@ if (v && v.requestFullscreen) { try { v.requestFullscreen(); return 'video'; } c
 return 'none';
 """
 
-# watch 페이지에서 <video> 의 상태를 본다(+막혀 있으면 play() 한번 시도).
-# nudge=true 일 때만 재생을 떠밀어, 아이가 일시정지한 영상은 다시 안 튼다.
-VIDEO_STATE_JS = r"""
-const nudge = arguments[0];
-function findVideo(root) {
-  const v = root.querySelector('video');
-  if (v) return v;
-  for (const el of root.querySelectorAll('*')) {
-    if (el.shadowRoot) { const r = findVideo(el.shadowRoot); if (r) return r; }
-  }
-  return null;
-}
-const v = findVideo(document);
-if (!v) return {ok: 0};
-if (nudge && v.paused && !v.ended) { try { v.play(); } catch (e) {} }
-return {
-  ok: 1,
-  ended: !!v.ended,
-  ct: v.currentTime || 0,
-  dur: (isFinite(v.duration) ? v.duration : 0),
-  paused: !!v.paused
-};
+PAUSE_JS = r"""
+function fv(r){const v=r.querySelector('video');if(v)return v;
+  for(const e of r.querySelectorAll('*')){if(e.shadowRoot){const x=fv(e.shadowRoot);if(x)return x;}}return null;}
+const v=fv(document); if(v&&!v.paused){try{v.pause();}catch(e){}} return v?1:0;
 """
 
+RESUME_JS = r"""
+function fv(r){const v=r.querySelector('video');if(v)return v;
+  for(const e of r.querySelectorAll('*')){if(e.shadowRoot){const x=fv(e.shadowRoot);if(x)return x;}}return null;}
+const v=fv(document); if(v&&v.paused){try{v.play();}catch(e){}} return v?1:0;
+"""
+
+
+# ── 상태 파일 / 명령 파일 IPC ────────────────────────────────────────────────
+
+def _write_status(url, st, pool_size):
+    """kids-control.py 가 읽는 상태 파일을 갱신한다."""
+    try:
+        obj = {
+            "url":       url or "",
+            "paused":    st.get("paused"),
+            "ct":        st.get("ct", 0),
+            "dur":       st.get("dur", 0),
+            "pool_size": pool_size,
+            "state":     ("idle"   if not st.get("ok")
+                          else ("paused" if st.get("paused") else "playing")),
+            "ts":        time.time(),
+        }
+        with open(STATUS_FILE, "w") as f:
+            json.dump(obj, f)
+    except Exception:
+        pass
+
+
+def _check_cmd(m):
+    """명령 파일을 읽고 실행한다. skip 명령이면 True 반환."""
+    try:
+        if not os.path.exists(CMD_FILE):
+            return False
+        with open(CMD_FILE) as f:
+            cmd = f.read().strip()
+        os.unlink(CMD_FILE)
+    except Exception:
+        return False
+
+    if cmd == "skip":
+        return True
+    try:
+        if cmd == "pause":
+            m.execute_script(PAUSE_JS)
+        elif cmd == "resume":
+            m.execute_script(RESUME_JS)
+        elif cmd == "fullscreen":
+            m.execute_script(FULLSCREEN_JS)
+    except IOError:
+        raise
+    except Exception:
+        pass
+    return False
+
+
+# ── Marionette 유틸 ──────────────────────────────────────────────────────────
 
 def collect_thumbs(m):
     try:
@@ -170,8 +232,6 @@ def collect_thumbs(m):
 
 
 def video_state(m, nudge=False):
-    """영상 상태 dict. 페이지 전환 중 일시적 스크립트 오류는 {} 로 흡수.
-    연결이 끊기면(IOError) 그대로 올려 보내 루프를 종료시킨다."""
     try:
         return m.execute_script(VIDEO_STATE_JS, [nudge]) or {}
     except IOError:
@@ -180,15 +240,8 @@ def video_state(m, nudge=False):
         return {}
 
 
-def pick(pool, recent):
-    """최근 본 것은 피해서 무작위로 하나 고른다."""
-    candidates = [h for h in pool if h not in recent] or pool
-    return random.choice(candidates)
-
-
 def go_fullscreen(m):
-    """YouTube 플레이어를 전체화면으로 — 옆 추천 썸네일을 가린다.
-    navigate 할 때마다 풀스크린이 풀리므로 영상마다 다시 호출한다."""
+    """navigate 후 매번 호출해 전체화면 진입을 확인한다."""
     for _ in range(5):
         try:
             r = m.execute_script(FULLSCREEN_JS)
@@ -209,8 +262,13 @@ def go_fullscreen(m):
     return False
 
 
+def pick(pool, recent):
+    candidates = [h for h in pool if h not in recent] or pool
+    return random.choice(candidates)
+
+
 def start_playing(m, url):
-    """watch 페이지로 이동하고 실제 재생이 시작될 때까지 몇 번 떠민 뒤, 전체화면으로."""
+    """watch 페이지로 이동하고 재생이 시작될 때까지 떠민 뒤 전체화면으로."""
     m.navigate(url)
     playing = False
     for _ in range(8):
@@ -223,43 +281,41 @@ def start_playing(m, url):
     return playing
 
 
-def monitor_until_done(m, max_stall=40):
-    """현재 영상이 끝날 때까지 감시. 반환:
-       'ended'  정상 종료(또는 거의 끝까지 봄)
-       'stall'  재생이 멈춘 채 너무 오래(로딩 실패 추정) → 건너뜀
-       'novideo' 영상 요소를 한참 못 찾음 → 건너뜀
-    """
-    last_ct = -1.0
-    stall_since = time.time()
+def monitor_until_done(m, url, pool, max_stall=40):
+    """현재 영상이 끝날 때까지 감시. 2초마다 상태 기록 + 명령 처리.
+    반환: 'ended' / 'stall' / 'novideo' / 'skip'"""
+    last_ct      = -1.0
+    stall_since  = time.time()
     novideo_since = None
     while True:
         time.sleep(2)
-        st = video_state(m)  # 감시 중엔 떠밀지 않음(아이의 일시정지 존중)
+        if _check_cmd(m):
+            return "skip"
+        st = video_state(m)
+        _write_status(url, st, len(pool))
         if not st.get("ok"):
             novideo_since = novideo_since or time.time()
             if time.time() - novideo_since > 20:
                 return "novideo"
             continue
         novideo_since = None
-
         if st.get("ended"):
             return "ended"
         dur, ct = st.get("dur", 0), st.get("ct", 0)
         if dur and ct >= dur - 1.0:
             return "ended"
-
-        # 일시정지면 아이의 선택 → 계속 기다림(스톨 타이머 리셋)
         if st.get("paused"):
             stall_since = time.time()
             last_ct = ct
             continue
-        # 재생 중인데 시간이 안 흐르면(버퍼링/에러) 스톨 카운트
         if abs(ct - last_ct) > 0.3:
             last_ct = ct
             stall_since = time.time()
         elif time.time() - stall_since > max_stall:
             return "stall"
 
+
+# ── 메인 루프 ────────────────────────────────────────────────────────────────
 
 def main():
     try:
@@ -269,7 +325,6 @@ def main():
         print("autoplay: Marionette 접속 실패:", e, file=sys.stderr)
         return 1
 
-    # 홈에 썸네일이 충분히 뜰 때까지 최대 ~45초 대기
     deadline = time.time() + 45
     pool = []
     while time.time() < deadline:
@@ -293,22 +348,22 @@ def main():
         while True:
             target = pick(pool, recent)
             recent.append(target)
+            _write_status(target, {"ok": 0}, len(pool))
             print("autoplay: ▶ %s (풀 %d)" % (target, len(pool)))
             start_playing(m, target)
 
-            result = monitor_until_done(m)
+            result = monitor_until_done(m, target, pool)
             print("autoplay: ◼ %s → %s" % (target, result))
 
-            # watch 페이지의 추천 썸네일을 풀에 보충(중복 제외)
             more = collect_thumbs(m)
             if more:
                 have = set(pool)
                 pool.extend(h for h in more if h not in have)
-                # 풀이 너무 커지지 않게 상한
                 if len(pool) > 120:
                     pool = pool[-120:]
     except IOError:
         print("autoplay: Firefox 종료 감지 — 자동재생 루프 종료", file=sys.stderr)
+        _write_status("", {}, 0)
         return 0
     except KeyboardInterrupt:
         return 0

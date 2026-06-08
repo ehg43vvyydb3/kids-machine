@@ -20,6 +20,15 @@ MINUTES=$(echo "$DIALOG" | cut -d, -f1)
 AUTOPLAY=$(echo "$DIALOG" | cut -d, -f2)  # True or False
 SATURATION=$(echo "$DIALOG" | cut -d, -f3)  # 0-100
 
+# 세션 상태 파일 기록 (kids-control.py 가 읽음)
+python3 -c "
+import json, sys, time
+mins, ap = int(sys.argv[1]), sys.argv[2] == 'True'
+now = time.time()
+json.dump({'start_ts': now, 'end_ts': now + mins*60, 'minutes': mins, 'autoplay': ap},
+          open('/tmp/kids-kiosk-state.json', 'w'))
+" "$MINUTES" "$AUTOPLAY"
+
 MAIN_PROFILE="$HOME/.mozilla/firefox/cfn7ue77.default-release-1780757897236"
 KIDS_PROFILE="$HOME/.mozilla/kids-kiosk"
 mkdir -p "$KIDS_PROFILE/chrome"
@@ -79,6 +88,7 @@ AUTOPLAY_PID=""
 if [ "$AUTOPLAY" = "True" ]; then
     python3 /home/jjejje/kids-machine/kids-autoplay.py &
     AUTOPLAY_PID=$!
+    echo "$AUTOPLAY_PID" > /tmp/kids-autoplay.pid
 fi
 
 # 키보드 그랩 시작
@@ -118,4 +128,6 @@ if [ -f "$TIMER_FLAG" ]; then
     cleanup_pointer
 fi
 
-rm -f "$TIMER_PIDFILE" "$GRAB_PIDFILE"
+rm -f "$TIMER_PIDFILE" "$GRAB_PIDFILE" \
+      /tmp/kids-autoplay.pid /tmp/kids-kiosk-state.json \
+      /tmp/kids-autoplay-status.json /tmp/kids-autoplay-cmd
