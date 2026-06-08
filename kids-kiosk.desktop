@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Kids Kiosk
+Comment=터치패드 잠금 후 YouTube Kids 키오스크 실행
+Exec=/home/kids/start-kids.sh
+Terminal=false
+X-GNOME-Autostart-enabled=true
