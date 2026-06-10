@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-시청 종료 화면 - 키보드 그랩 유지, Ctrl+Alt+K 로만 닫힘
+시청 종료 화면 - 키보드 그랩 유지, Ctrl+Alt+Q 로만 닫힘
 """
 import signal
 import tkinter as tk
@@ -88,7 +88,7 @@ class EndScreen:
                     self.ctrl = True
                 elif ks in (XK.XK_Alt_L, XK.XK_Alt_R):
                     self.alt = True
-                elif ks == XK.XK_k and self.ctrl and self.alt:
+                elif ks == XK.XK_q and self.ctrl and self.alt:
                     self._exit()
                     return
             elif ev.type == X.KeyRelease:

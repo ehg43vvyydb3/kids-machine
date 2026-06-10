@@ -5,13 +5,25 @@ GRAB_PIDFILE="/tmp/kids-kb-grabber.pid"
 POINTER_IDFILE="/tmp/kids-pointer-ids.txt"
 TIMER_FLAG="/tmp/kids-timer-ended"
 
+# 활성(마스터에 연결된) slave pointer ID 목록.
+# 주의: disable 된 장치는 xinput list 에서 [floating slave] 로 표시되어
+# 여기서 안 잡힌다 — 복원은 반드시 POINTER_IDFILE 에 저장된 ID 로 해야 한다.
+attached_pointer_ids() {
+    xinput list | grep -v "XTEST\|master" | grep "slave.*pointer" | \
+        grep -o 'id=[0-9]*' | cut -d= -f2
+}
+
+# 마우스 복원: 저장된 ID 파일 + 현재 연결된 장치 모두 enable
+restore_pointers() {
+    { cat "$POINTER_IDFILE" 2>/dev/null; attached_pointer_ids; } | \
+      sort -u | while read id; do
+        [ -n "$id" ] && xinput enable "$id" 2>/dev/null
+    done
+}
+
 cleanup_pointer() {
-    if [ -f "$POINTER_IDFILE" ]; then
-        while read id; do
-            xinput enable "$id" 2>/dev/null
-        done < "$POINTER_IDFILE"
-        rm -f "$POINTER_IDFILE"
-    fi
+    restore_pointers
+    rm -f "$POINTER_IDFILE"
 }
 
 # 시간 입력 + 자동재생 여부
@@ -112,31 +124,34 @@ wait $FF_PID
 # 타이머를 가장 먼저 종료 (플래그 생성 전에 막아야 함)
 kill "$(cat "$TIMER_PIDFILE" 2>/dev/null)" 2>/dev/null
 
-# 타임리미트 바 종료
-kill "$TIMERBAR_PID" 2>/dev/null
+# 타임리미트 바 종료 (adjust_time으로 PID가 갱신됐을 수 있으므로 pkill 사용)
+pkill -f kids-timer-bar.py 2>/dev/null
 
 # 키보드 그랩 종료
 kill "$(cat "$GRAB_PIDFILE" 2>/dev/null)" 2>/dev/null
 sleep 0.3
 
+# 마우스 항상 복원 (kb-grabber 종료 타이밍 무관하게 직접 보장)
+# kb-grabber 가 잠근 채 죽었으면 장치가 floating 이라 ID 파일로만 찾을 수 있다
+restore_pointers
+
 if [ -f "$TIMER_FLAG" ]; then
     rm -f "$TIMER_FLAG"
 
-    # 마우스/터치패드 전체 비활성화
-    xinput list | grep -v "XTEST\|master" | grep "slave.*pointer" | \
-      grep -o 'id=[0-9]*' | cut -d= -f2 > "$POINTER_IDFILE"
+    # 마우스/터치패드 전체 비활성화 (ID 를 먼저 저장한 뒤 잠가야 복원 가능)
+    attached_pointer_ids > "$POINTER_IDFILE"
     while read id; do
         xinput disable "$id" 2>/dev/null
     done < "$POINTER_IDFILE"
 
-    # 종료 화면 (내부에서 키보드 그랩 + Ctrl+Alt+K 대기)
+    # 종료 화면 (내부에서 키보드 그랩 + Ctrl+Alt+Q 대기)
     python3 /home/jjejje/kids-machine/kids-end-screen.py
 
     # 마우스 복원
     cleanup_pointer
 fi
 
-rm -f "$TIMER_PIDFILE" "$GRAB_PIDFILE" \
+rm -f "$TIMER_PIDFILE" "$GRAB_PIDFILE" "$POINTER_IDFILE" \
       /tmp/kids-autoplay.pid /tmp/kids-timerbar.pid \
-      /tmp/kids-kiosk-state.json \
+      /tmp/kids-kiosk-state.json /tmp/kids-grabber-state.json \
       /tmp/kids-autoplay-status.json /tmp/kids-autoplay-cmd

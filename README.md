@@ -34,9 +34,10 @@ A set of shell + Python scripts that turn a Linux machine (tested on Xfce / X11,
   back to VP9 for smooth playback.
 - **Color saturation control** — optionally desaturate the screen (a gentle nudge
   for screen-time).
-- **Input lock** — keyboard is grabbed during playback (volume keys still work),
-  the touchpad/mouse can be disabled, and **Ctrl+Alt+K** is the parents' emergency
-  exit.
+- **Input lock** — keyboard and mouse are locked during playback (volume keys
+  still work). Parent hotkeys: **Ctrl+Alt+Q** quits the kiosk, **Ctrl+Alt+K**
+  toggles the keyboard lock, **Ctrl+Alt+M** toggles the mouse lock. The same
+  toggles are available remotely from `kids-control.py`.
 
 ### Requirements
 
@@ -62,7 +63,8 @@ A set of shell + Python scripts that turn a Linux machine (tested on Xfce / X11,
 ./kids-kiosk.sh
 ```
 
-To stop early: **Ctrl+Alt+K**.
+To stop early: **Ctrl+Alt+Q**. Toggle locks while watching: **Ctrl+Alt+K**
+(keyboard) / **Ctrl+Alt+M** (mouse).
 
 ### Unattended setup (dedicated `kids` account, auto-start on login)
 
@@ -95,6 +97,7 @@ session — there is never more than one control instance running.
 ─────────────────  Kids Kiosk Control  ─────────────── 09:41:23
   ● RUNNING  (Firefox PID 12345)
   Marionette ✓  자동재생 ON (PID 12399)
+  키보드 잠금 🔒   마우스 잠금 🔒
 
   세션 남은 시간: 18분 44초
 
@@ -105,7 +108,7 @@ session — there is never more than one control instance running.
 
 ─────────────────────────────────────────────────────
   [s] 다음 영상   [p] 일시정지/재생   [f] 전체화면   [=] +10분   [-] -10분
-  [k] 키오스크 종료   [r] 새로고침   [q] UI 종료
+  [i] 키보드 잠금   [m] 마우스 잠금   [k] 키오스크 종료   [r] 새로고침   [q] UI 종료
 ```
 
 **Key bindings:**
@@ -117,6 +120,8 @@ session — there is never more than one control instance running.
 | `f` | Re-enter fullscreen | Autoplay running |
 | `=` / `+` | Add 10 minutes | Kiosk running |
 | `-` | Subtract 10 minutes | Kiosk running |
+| `i` | Toggle keyboard lock | Kiosk running |
+| `m` | Toggle mouse lock | Kiosk running |
 | `k` | Kill the kiosk (with confirmation) | Kiosk running |
 | `o` | Start kiosk (opens setup form) | Kiosk stopped |
 | `e` | Extend time + restart (end screen) | End screen showing |
@@ -149,8 +154,8 @@ closes, the Marionette connection drops and the loop exits cleanly.
 | `setup-kids-login.sh` | One-time Google login + parent/child setup in the kiosk profile. |
 | `kids-input-dialog.py` | Tk dialog: minutes / autoplay checkbox / saturation slider. |
 | `kids-timer-bar.py` | Always-on-top top-screen countdown bar. |
-| `kids-end-screen.py` | "Time's up" screen; stays grabbed, closes only on Ctrl+Alt+K or remote SIGTERM. |
-| `kids-kb-grabber.py` | Keyboard grab; volume keys, screenshot ('p'), Ctrl+Alt+K exit. |
+| `kids-end-screen.py` | "Time's up" screen; stays grabbed, closes only on Ctrl+Alt+Q or remote SIGTERM. |
+| `kids-kb-grabber.py` | Keyboard/mouse lock; volume keys, screenshot ('p'), Ctrl+Alt+Q/K/M hotkeys, SIGUSR1/2 remote toggles. |
 | `kids-kiosk-exit.sh` | Timer-expiry hook: flag + quit Firefox. |
 | `install.sh` | Creates the `kids` account and registers autostart. |
 | `start-kids.sh` | Autostart entry for the `kids` account (disable touchpad → kiosk). |
@@ -186,8 +191,9 @@ closes, the Marionette connection drops and the loop exits cleanly.
 - **하드웨어 영상 디코딩** — VA-API(Intel iHD) 활성화, AV1은 끄고 VP9로 폴백해
   부드럽게 재생합니다.
 - **채도 조절** — 화면 채도를 낮출 수 있습니다(시청 자제용).
-- **입력 잠금** — 재생 중 키보드 그랩(볼륨키는 동작), 터치패드/마우스 비활성화
-  가능, 부모용 비상탈출 **Ctrl+Alt+K**.
+- **입력 잠금** — 재생 중 키보드/마우스 잠금(볼륨키는 동작). 부모용 단축키:
+  **Ctrl+Alt+Q** 키오스크 종료, **Ctrl+Alt+K** 키보드 잠금 토글, **Ctrl+Alt+M**
+  마우스 잠금 토글. 같은 토글을 `kids-control.py`에서 원격으로도 할 수 있습니다.
 
 ### 준비물
 
@@ -213,7 +219,8 @@ closes, the Marionette connection drops and the loop exits cleanly.
 ./kids-kiosk.sh
 ```
 
-중간에 끄려면: **Ctrl+Alt+K**.
+중간에 끄려면: **Ctrl+Alt+Q**. 시청 중 잠금 토글: **Ctrl+Alt+K**(키보드) /
+**Ctrl+Alt+M**(마우스).
 
 ### 무인 설정 (전용 `kids` 계정, 로그인 시 자동 실행)
 
@@ -250,6 +257,8 @@ ssh user@kiosk-host python3 /home/jjejje/kids-machine/kids-control.py
 | `f` | 전체화면 재진입 | 자동재생 실행 중 |
 | `=` / `+` | +10분 | 키오스크 실행 중 |
 | `-` | −10분 | 키오스크 실행 중 |
+| `i` | 키보드 잠금 토글 | 키오스크 실행 중 |
+| `m` | 마우스 잠금 토글 | 키오스크 실행 중 |
 | `k` | 키오스크 종료 (확인 필요) | 키오스크 실행 중 |
 | `o` | 키오스크 시작 (설정 폼 입력) | 키오스크 정지 상태 |
 | `e` | 시간 연장 + 재시작 | 종료화면 표시 중 |
@@ -281,8 +290,8 @@ Marionette 연결이 끊겨 루프가 깔끔하게 종료됩니다.
 | `setup-kids-login.sh` | 키오스크 프로필에서 최초 1회 구글 로그인 + 부모/아이 설정. |
 | `kids-input-dialog.py` | Tk 다이얼로그: 시간 / 자동재생 체크 / 채도 슬라이더. |
 | `kids-timer-bar.py` | 항상 위에 뜨는 상단 카운트다운 바. |
-| `kids-end-screen.py` | "시청 종료" 화면; 그랩 유지, Ctrl+Alt+K 또는 원격 SIGTERM으로 닫힘. |
-| `kids-kb-grabber.py` | 키보드 그랩; 볼륨키, 스크린샷('p'), Ctrl+Alt+K 종료. |
+| `kids-end-screen.py` | "시청 종료" 화면; 그랩 유지, Ctrl+Alt+Q 또는 원격 SIGTERM으로 닫힘. |
+| `kids-kb-grabber.py` | 키보드/마우스 잠금; 볼륨키, 스크린샷('p'), Ctrl+Alt+Q/K/M 단축키, SIGUSR1/2 원격 토글. |
 | `kids-kiosk-exit.sh` | 타이머 만료 훅: 플래그 + Firefox 종료. |
 | `install.sh` | `kids` 계정 생성 및 autostart 등록. |
 | `start-kids.sh` | `kids` 계정 autostart 진입점(터치패드 끄고 → 키오스크). |

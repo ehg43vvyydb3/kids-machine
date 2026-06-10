@@ -17,6 +17,8 @@ CMD_FILE         = "/tmp/kids-autoplay-cmd"
 AUTOPLAY_PIDFILE = "/tmp/kids-autoplay.pid"
 TIMER_PIDFILE    = "/tmp/kids-kiosk-timer.pid"
 TIMERBAR_PIDFILE = "/tmp/kids-timerbar.pid"
+GRAB_PIDFILE     = "/tmp/kids-kb-grabber.pid"
+GRAB_STATEFILE   = "/tmp/kids-grabber-state.json"
 TIMERBAR_SCRIPT  = "/home/jjejje/kids-machine/kids-timer-bar.py"
 KIOSK_SCRIPT     = "/home/jjejje/kids-machine/kids-kiosk.sh"
 LOCK_FILE        = "/tmp/kids-control.lock"
@@ -98,9 +100,11 @@ def _marionette_up():
 def gather():
     state  = _read_json(STATE_FILE)
     status = _read_json(STATUS_FILE)
+    gstate = _read_json(GRAB_STATEFILE)
     ff_pid = _ff_pid()
     ap_pid = _pid_alive(AUTOPLAY_PIDFILE)
     es_pid = _endscreen_pid()
+    gr_pid = _pid_alive(GRAB_PIDFILE)
 
     remaining = None
     if state.get("end_ts"):
@@ -117,6 +121,9 @@ def gather():
         ap_pid    = ap_pid,
         endscreen = es_pid is not None,
         es_pid    = es_pid,
+        grab_pid  = gr_pid,
+        kb_locked    = gstate.get("kb_locked"),    # None = 정보 없음
+        mouse_locked = gstate.get("mouse_locked"),
         marionette= _marionette_up(),
         autoplay  = state.get("autoplay", False),
         minutes   = state.get("minutes"),
@@ -154,6 +161,16 @@ def dismiss_endscreen():
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
+
+
+def toggle_lock(grab_pid, sig):
+    """kb-grabber 에 시그널을 보내 잠금을 토글한다.
+    SIGUSR1 = 키보드, SIGUSR2 = 마우스 (kids-kb-grabber.py 와 약속)"""
+    try:
+        os.kill(grab_pid, sig)
+        return True
+    except Exception:
+        return False
 
 
 def extend_session(scr):
@@ -425,7 +442,18 @@ def draw(scr, s, last_ref, msg, msg_until):
     if s["ap_pid"]:
         ap_str += f" (PID {s['ap_pid']})"
     wr(r, 2 + len(m_str), ap_str)
-    r += 2
+    r += 1
+
+    # 입력 잠금 상태 (kb-grabber 가 살아 있을 때만)
+    if s["running"] and s["grab_pid"]:
+        def lock_lbl(name, v):
+            return f"{name} " + ("?" if v is None else "잠금 🔒" if v else "해제 🔓")
+        kb_s = lock_lbl("키보드", s["kb_locked"])
+        ms_s = lock_lbl("마우스", s["mouse_locked"])
+        wr(r, 2, kb_s, C_OK if s["kb_locked"] else C_WARN)
+        wr(r, 2 + _dw(kb_s) + 3, ms_s, C_OK if s["mouse_locked"] else C_WARN)
+        r += 1
+    r += 1
 
     # 세션 남은 시간
     if s["remaining"] is not None:
@@ -483,6 +511,8 @@ def draw(scr, s, last_ref, msg, msg_until):
             ("[-] -10분",         True),
         ]
         ROW2 = [
+            ("[i] 키보드 잠금",   bool(s["grab_pid"])),
+            ("[m] 마우스 잠금",   bool(s["grab_pid"])),
             ("[k] 키오스크 종료", True),
             ("[r] 새로고침",      True),
             ("[q] UI 종료",       True),
@@ -600,6 +630,26 @@ def run(scr):
                 msg_until = time.time() + 8
                 time.sleep(1.5)
                 s = gather(); last_ref = time.time()
+        elif ch == ord("i") and s["running"] and s["grab_pid"]:
+            ok = toggle_lock(s["grab_pid"], signal.SIGUSR1)
+            time.sleep(0.3)  # 그랩버가 상태 파일을 갱신할 시간
+            s = gather(); last_ref = time.time()
+            if ok:
+                state = "잠금" if s["kb_locked"] else "해제"
+                msg = f"→ 키보드 {state}"
+            else:
+                msg = "토글 실패 — kb-grabber 프로세스 없음"
+            msg_until = time.time() + 3
+        elif ch == ord("m") and s["running"] and s["grab_pid"]:
+            ok = toggle_lock(s["grab_pid"], signal.SIGUSR2)
+            time.sleep(0.3)
+            s = gather(); last_ref = time.time()
+            if ok:
+                state = "잠금" if s["mouse_locked"] else "해제"
+                msg = f"→ 마우스 {state}"
+            else:
+                msg = "토글 실패 — kb-grabber 프로세스 없음"
+            msg_until = time.time() + 3
         elif ch == ord("k") and s["running"]:
             if confirm_kill(scr):
                 kill_kiosk()
