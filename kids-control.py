@@ -507,8 +507,8 @@ def draw(scr, s, last_ref, msg, msg_until):
             ("[s] 다음 영상",     bool(s["ap_pid"])),
             ("[p] 일시정지/재생", bool(s["ap_pid"])),
             ("[f] 전체화면",      bool(s["ap_pid"])),
-            ("[=] +10분",         True),
-            ("[-] -10분",         True),
+            ("[=] +5분",          True),
+            ("[-] -5분",          True),
         ]
         ROW2 = [
             ("[i] 키보드 잠금",   bool(s["grab_pid"])),
@@ -613,11 +613,11 @@ def run(scr):
             send_cmd("fullscreen")
             msg, msg_until = "→ 전체화면 명령 전달됨", time.time() + 3
         elif ch in (ord("="), ord("+")) and s["running"]:
-            result = adjust_time(+10)
+            result = adjust_time(+5)
             msg, msg_until = result, time.time() + 4
             s = gather(); last_ref = time.time()
         elif ch == ord("-") and s["running"]:
-            result = adjust_time(-10)
+            result = adjust_time(-5)
             msg, msg_until = result, time.time() + 4
             s = gather(); last_ref = time.time()
         elif ch == ord("o") and not s["running"]:
