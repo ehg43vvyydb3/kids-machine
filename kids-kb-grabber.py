@@ -4,6 +4,10 @@
   Ctrl+Alt+Q : 키오스크 종료
   Ctrl+Alt+K : 키보드 잠금 토글
   Ctrl+Alt+M : 마우스 잠금 토글
+  Ctrl+Alt+S : 다음 영상 (kids-autoplay 에 skip 전달)
+  Ctrl+Alt+, : 음량 내림
+  Ctrl+Alt+. : 음량 올림
+  Ctrl+Alt+/ : 음소거 토글
 기본: 키보드 잠금 ON, 마우스 잠금 ON
 
 원격 제어 (kids-control.py 가 시그널로 토글):
@@ -21,6 +25,7 @@ _VOL_MUTE  = 0x1008FF12
 
 POINTER_IDFILE = '/tmp/kids-pointer-ids.txt'
 STATE_FILE     = '/tmp/kids-grabber-state.json'
+AUTOPLAY_CMD   = '/tmp/kids-autoplay-cmd'  # kids-autoplay.py 와 약속된 명령 파일
 
 _display      = None
 _root         = None
@@ -43,6 +48,21 @@ def _save_state():
 def _vol(delta):
     subprocess.Popen(['pactl', 'set-sink-volume', '@DEFAULT_SINK@', delta],
                      close_fds=True)
+
+
+def _mute():
+    subprocess.Popen(['pactl', 'set-sink-mute', '@DEFAULT_SINK@', 'toggle'],
+                     close_fds=True)
+
+
+def _skip_video():
+    """kids-autoplay.py 에 다음 영상으로 건너뛰라는 명령을 파일로 전달.
+    (kids-control.py 의 send_cmd('skip') 과 동일한 메커니즘)"""
+    try:
+        with open(AUTOPLAY_CMD, 'w') as f:
+            f.write('skip')
+    except OSError:
+        pass
 
 
 def _attached_pointer_ids():
@@ -115,7 +135,8 @@ def _grab_hotkeys():
     global _hotkey_grabs
     _ungrab_hotkeys()
     base = X.ControlMask | X.Mod1Mask
-    for ks in (XK.XK_q, XK.XK_k, XK.XK_m):
+    for ks in (XK.XK_q, XK.XK_k, XK.XK_m, XK.XK_s,
+               XK.XK_comma, XK.XK_period, XK.XK_slash):
         kc = _display.keysym_to_keycode(ks)
         if not kc:
             continue
@@ -260,6 +281,14 @@ def main():
                         _set_kb(False)
                     elif _ctrl and _alt and ks == XK.XK_m:
                         _set_mouse(not _mouse_locked)
+                    elif _ctrl and _alt and ks == XK.XK_s:
+                        _skip_video()
+                    elif _ctrl and _alt and ks == XK.XK_comma:
+                        _vol('-5%')
+                    elif _ctrl and _alt and ks == XK.XK_period:
+                        _vol('+5%')
+                    elif _ctrl and _alt and ks == XK.XK_slash:
+                        _mute()
                     elif ks == _VOL_RAISE:
                         _vol('+5%')
                     elif ks == _VOL_LOWER:
@@ -292,6 +321,14 @@ def main():
                         _set_kb(True)
                     elif ks == XK.XK_m:
                         _set_mouse(not _mouse_locked)
+                    elif ks == XK.XK_s:
+                        _skip_video()
+                    elif ks == XK.XK_comma:
+                        _vol('-5%')
+                    elif ks == XK.XK_period:
+                        _vol('+5%')
+                    elif ks == XK.XK_slash:
+                        _mute()
 
             elif ev.type == X.KeyRelease and _kb_locked:
                 if ks in (XK.XK_Control_L, XK.XK_Control_R):
