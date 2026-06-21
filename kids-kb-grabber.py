@@ -15,7 +15,7 @@
   SIGUSR2 : 마우스 잠금 토글
 현재 잠금 상태는 /tmp/kids-grabber-state.json 으로 내보낸다.
 """
-import re, sys, signal, select, subprocess, datetime, os, json, traceback
+import re, sys, signal, select, subprocess, datetime, os, json, time, traceback
 from Xlib import X, XK, error as Xerror, display as xdisplay
 from Xlib.ext.xtest import fake_input
 
@@ -177,6 +177,23 @@ def _set_kb(locked):
     _save_state()
 
 
+def _reassert_locks():
+    """suspend/resume 등으로 grab 이 풀리거나 포인터가 재열거됐을 때 잠금을
+    다시 강제한다. 절전은 kids-kiosk.sh 가 막지만, 배터리 위급 절전처럼
+    inhibitor 로 막을 수 없는 경우를 위한 보험이다."""
+    if _kb_locked:
+        _full_grab()  # 소유 클라이언트의 재grab 은 멱등 — 풀렸으면 다시 잡는다
+    if _mouse_locked:
+        # 잠금 중이면 평소엔 attached 가 비어 no-op. resume 으로 다시 살아난
+        # (enabled) 포인터가 보이면 그 ID 를 기억하고 다시 disable 한다.
+        new = _attached_pointer_ids()
+        if new:
+            _pointer_ids.update(new)
+            _save_pointer_ids()
+            for pid in new:
+                subprocess.run(['xinput', 'disable', pid], check=False)
+
+
 def _forward_key(keycode):
     """잠금 중 허용된 키를 Firefox로 전달 (잠깐 그랩 해제 후 재그랩)."""
     try:
@@ -243,8 +260,15 @@ def main():
 
     global _ctrl, _alt
 
+    _last_reassert = 0.0
     try:
         while True:
+            # 주기적으로 잠금 재확인 (suspend/resume 후 grab·마우스 복구용)
+            now = time.monotonic()
+            if now - _last_reassert >= 2.0:
+                _reassert_locks()
+                _last_reassert = now
+
             # 원격 토글 요청 처리 (시그널 핸들러가 쌓은 것)
             while _pending:
                 act = _pending.pop(0)

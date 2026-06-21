@@ -26,6 +26,38 @@ cleanup_pointer() {
     rm -f "$POINTER_IDFILE"
 }
 
+# ── 절전 / 화면잠금 차단 ───────────────────────────────────────────
+# 키오스크 실행 동안 노트북 뚜껑을 닫아도 절전(suspend)·idle 자동절전·자동
+# 화면잠금을 하지 않도록 막는다. 화면만 꺼지고 세션은 그대로 유지돼 다시 열면
+# 끊김 없이 재생이 이어진다. (lid-close 까지 막으려면 logind 의
+# LidSwitchIgnoreInhibited=no 가 필요 — install.sh 가 설정한다.)
+# sleep infinity 가 inhibitor 락을 잡고 있다가 키오스크 종료 시 함께 죽으며
+# 자동 해제된다.
+INHIBIT_PID=""
+if command -v systemd-inhibit >/dev/null; then
+    systemd-inhibit --what=handle-lid-switch:sleep:idle \
+        --who="kids-kiosk" --why="키오스크 시청 중" --mode=block \
+        sleep infinity &
+    INHIBIT_PID=$!
+fi
+
+# light-locker 의 잠금화면은 kb-grabber 의 키보드 grab 과 충돌해 "화면 잠금
+# 실패" 메시지를 띄우고 검은 화면을 만든다 — 세션 동안 멈춰 둔다.
+LIGHTLOCKER_WAS_RUNNING=0
+if pgrep -x light-locker >/dev/null; then
+    LIGHTLOCKER_WAS_RUNNING=1
+    pkill -x light-locker
+fi
+
+# 정상/비정상 종료 모두에서 inhibitor 해제 + light-locker 복원 보장
+_release_power_guards() {
+    [ -n "$INHIBIT_PID" ] && kill "$INHIBIT_PID" 2>/dev/null
+    if [ "$LIGHTLOCKER_WAS_RUNNING" = 1 ] && command -v light-locker >/dev/null; then
+        setsid light-locker >/dev/null 2>&1 &
+    fi
+}
+trap _release_power_guards EXIT
+
 # 시간 입력 + 자동재생 여부
 # 인자를 직접 받으면(kids-control.py 원격 시작) 다이얼로그를 생략한다.
 if [ $# -ge 3 ]; then
