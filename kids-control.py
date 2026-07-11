@@ -19,6 +19,8 @@ TIMER_PIDFILE    = "/tmp/kids-kiosk-timer.pid"
 TIMERBAR_PIDFILE = "/tmp/kids-timerbar.pid"
 GRAB_PIDFILE     = "/tmp/kids-kb-grabber.pid"
 GRAB_STATEFILE   = "/tmp/kids-grabber-state.json"
+BLACKOUT_FILE    = "/tmp/kids-blackout-enabled"
+DAILY_FILE       = "/tmp/kids-daily-watch.json"
 TIMERBAR_SCRIPT  = "/home/jjejje/kids-machine/kids-timer-bar.py"
 KIOSK_SCRIPT     = "/home/jjejje/kids-machine/kids-kiosk.sh"
 LOCK_FILE        = "/tmp/kids-control.lock"
@@ -115,6 +117,10 @@ def gather():
               if "watch?v=" in url else "")
     age    = (time.time() - status["ts"]) if status.get("ts") else None
 
+    daily      = _read_json(DAILY_FILE)
+    today      = datetime.now().strftime("%Y-%m-%d")
+    daily_secs = daily.get("seconds", 0) if daily.get("date") == today else 0
+
     return dict(
         running   = ff_pid is not None,
         ff_pid    = ff_pid,
@@ -135,6 +141,8 @@ def gather():
         dur       = status.get("dur", 0),
         pool      = status.get("pool_size", 0),
         age       = age,
+        blackout  = os.path.exists(BLACKOUT_FILE),
+        daily_secs= daily_secs,
     )
 
 
@@ -427,6 +435,13 @@ def adjust_time(delta_minutes):
 
 # ── 포맷 ────────────────────────────────────────────────────────────────────
 
+def fmt_hm(secs):
+    """초를 'N시간 M분' 형태로 (자정 기준 일일 누적 시청량 표시용)."""
+    total_min = int(secs) // 60
+    h, m = divmod(total_min, 60)
+    return f"{h}시간 {m}분" if h else f"{m}분"
+
+
 def fmt_dur(secs):
     if not secs:
         return "--:--"
@@ -470,6 +485,11 @@ def draw(scr, s, last_ref, msg, msg_until):
 
     r = 2
 
+    # 오늘 누적 시청 시간 (자정 기준 리셋, 키오스크 실행 여부와 무관하게 표시)
+    wr(r, 2, f"오늘 누적 시청: {fmt_hm(s.get('daily_secs', 0))}", DIM)
+    r += 1
+    r += 1  # 빈 줄
+
     # ── 키오스크 상태 ──────────────────────────────────────────────────────────
     if s["running"]:
         wr(r, 2, "● RUNNING", C_OK | curses.A_BOLD)
@@ -504,8 +524,9 @@ def draw(scr, s, last_ref, msg, msg_until):
     # 세션 남은 시간
     if s["remaining"] is not None:
         mins, secs = divmod(int(s["remaining"]), 60)
-        attr = C_WARN if s["remaining"] < 120 else 0
-        wr(r, 2, f"세션 남은 시간: {mins}분 {secs:02d}초", attr)
+        attr   = C_WARN if s["remaining"] < 120 else 0
+        bo_tag = "  [암전 ON]" if s.get("blackout") else ""
+        wr(r, 2, f"세션 남은 시간: {mins}분 {secs:02d}초{bo_tag}", attr)
         r += 1
     r += 1  # 빈 줄
 
@@ -564,6 +585,7 @@ def draw(scr, s, last_ref, msg, msg_until):
             ("[/] 음소거",        True),
         ]
         ROW3 = [
+            ("[b] 암전",          True),
             ("[Q] 키오스크 종료", True),
             ("[r] 새로고침",      True),
             ("[q] UI 종료",       True),
@@ -695,6 +717,20 @@ def run(scr):
                 msg = f"→ 마우스 {state}"
             else:
                 msg = "토글 실패 — kb-grabber 프로세스 없음"
+            msg_until = time.time() + 3
+        elif ch == ord("b") and s["running"]:
+            if os.path.exists(BLACKOUT_FILE):
+                try:
+                    os.unlink(BLACKOUT_FILE)
+                except Exception:
+                    pass
+                msg = "→ 일시정지 암전 OFF"
+            else:
+                try:
+                    open(BLACKOUT_FILE, "w").close()
+                except Exception:
+                    pass
+                msg = "→ 일시정지 암전 ON"
             msg_until = time.time() + 3
         elif ch == ord("Q") and s["running"]:
             if confirm_kill(scr):

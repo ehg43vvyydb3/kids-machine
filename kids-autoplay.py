@@ -23,6 +23,7 @@ from collections import deque
 HOST, PORT   = "127.0.0.1", 2828
 STATUS_FILE  = "/tmp/kids-autoplay-status.json"
 CMD_FILE     = "/tmp/kids-autoplay-cmd"
+DAILY_FILE   = "/tmp/kids-daily-watch.json"
 
 
 class Marionette:
@@ -172,6 +173,54 @@ const v=fv(document); if(v&&v.paused){try{v.play();}catch(e){}} return v?1:0;
 """
 
 
+# ── 일일 누적 시청 시간 (자정 리셋, 일시정지 제외) ────────────────────────────
+# kids-timer-bar.py(세션 UI)와 무관하게, 실제 재생 감시 루프를 도는 이 프로세스가
+# 살아있는 동안 계속 기록한다 — 세션 시간 조정/타이머바 재시작에 영향받지 않는다.
+
+_daily         = None
+_daily_last_ts = None
+
+
+def _today_str():
+    return time.strftime("%Y-%m-%d")
+
+
+def _load_daily():
+    try:
+        with open(DAILY_FILE) as f:
+            d = json.load(f)
+        if d.get("date") == _today_str():
+            return d
+    except Exception:
+        pass
+    return {"date": _today_str(), "seconds": 0}
+
+
+def _save_daily(d):
+    try:
+        with open(DAILY_FILE, "w") as f:
+            json.dump(d, f)
+    except Exception:
+        pass
+
+
+def _tick_daily(is_paused):
+    """호출 시점 기준 경과 시간을 오늘 누적 시청시간에 더한다."""
+    global _daily, _daily_last_ts
+    now = time.time()
+    if _daily is None:
+        _daily = _load_daily()
+        _daily_last_ts = now
+        return
+    dt = min(max(0.0, now - _daily_last_ts), 5.0)  # 순간 정지/드리프트 대비 상한
+    _daily_last_ts = now
+    if _daily.get("date") != _today_str():
+        _daily = {"date": _today_str(), "seconds": 0}
+    if not is_paused:
+        _daily["seconds"] += dt
+    _save_daily(_daily)
+
+
 # ── 상태 파일 / 명령 파일 IPC ────────────────────────────────────────────────
 
 def _write_status(url, st, pool_size):
@@ -273,6 +322,7 @@ def start_playing(m, url):
     playing = False
     for _ in range(8):
         st = video_state(m, nudge=True)
+        _tick_daily(bool(st.get("paused")))
         if st.get("ok") and not st.get("paused"):
             playing = True
             break
@@ -293,6 +343,7 @@ def monitor_until_done(m, url, pool, max_stall=40):
             return "skip"
         st = video_state(m)
         _write_status(url, st, len(pool))
+        _tick_daily(bool(st.get("paused")))
         if not st.get("ok"):
             novideo_since = novideo_since or time.time()
             if time.time() - novideo_since > 20:
