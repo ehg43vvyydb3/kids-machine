@@ -23,7 +23,7 @@ from collections import deque
 HOST, PORT   = "127.0.0.1", 2828
 STATUS_FILE  = "/tmp/kids-autoplay-status.json"
 CMD_FILE     = "/tmp/kids-autoplay-cmd"
-DAILY_FILE   = "/tmp/kids-daily-watch.json"
+DAILY_FILE   = "/home/jjejje/.kids-daily-watch.json"  # /tmp는 재부팅 시 초기화되므로 홈에 저장
 
 
 class Marionette:

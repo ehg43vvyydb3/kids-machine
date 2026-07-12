@@ -66,6 +66,14 @@ YouTube Kids 로그인 상태는 쿠키가 아니라 storage(localStorage/Indexe
 변경에 흔들리지 않지만, YouTube Kids DOM 구조가 바뀌면
 `kids-autoplay.py`의 셀렉터/JS를 갱신해야 한다.
 
+### 7. `/tmp`는 재부팅하면 비워진다 — 하루 넘게 살아야 하는 데이터는 두지 말 것
+위 프로세스 간 통신 파일들은 전부 `/tmp`에 두는데, 이는 `systemd-tmpfiles-setup.service`가
+부팅 시 `--remove` 옵션으로 `/tmp`를 정리하기 때문에 **키오스크 세션이 어차피 재부팅과
+함께 끝나는 상태**(pid, grabber 상태 등)에는 적합하다. 반면 일일 누적 시청량처럼
+**같은 날 안에서 재부팅을 넘겨서도 유지돼야 하는 값**을 `/tmp`에 두면 재부팅 시 0으로
+리셋되는 버그가 난다(실제로 겪음). 그런 값은 `/home/jjejje/.kids-daily-watch.json`처럼
+`/tmp` 밖의 홈 디렉터리에 저장한다.
+
 ## 검증
 - 셸: `bash -n kids-kiosk.sh`, `bash -n install.sh`
 - 파이썬: `python3 -m py_compile kids-kb-grabber.py` (다른 .py도 동일)
