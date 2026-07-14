@@ -20,6 +20,7 @@ TIMERBAR_PIDFILE = "/tmp/kids-timerbar.pid"
 GRAB_PIDFILE     = "/tmp/kids-kb-grabber.pid"
 GRAB_STATEFILE   = "/tmp/kids-grabber-state.json"
 BLACKOUT_FILE    = "/tmp/kids-blackout-enabled"
+POWEROFF_FILE    = "/tmp/kids-poweroff-enabled"
 DAILY_FILE       = "/home/jjejje/.kids-daily-watch.json"  # /tmp는 재부팅 시 초기화되므로 홈에 저장
 TIMERBAR_SCRIPT  = "/home/jjejje/kids-machine/kids-timer-bar.py"
 KIOSK_SCRIPT     = "/home/jjejje/kids-machine/kids-kiosk.sh"
@@ -142,6 +143,7 @@ def gather():
         pool      = status.get("pool_size", 0),
         age       = age,
         blackout  = os.path.exists(BLACKOUT_FILE),
+        poweroff  = os.path.exists(POWEROFF_FILE),
         daily_secs= daily_secs,
     )
 
@@ -526,7 +528,8 @@ def draw(scr, s, last_ref, msg, msg_until):
         mins, secs = divmod(int(s["remaining"]), 60)
         attr   = C_WARN if s["remaining"] < 120 else 0
         bo_tag = "  [암전 ON]" if s.get("blackout") else ""
-        wr(r, 2, f"세션 남은 시간: {mins}분 {secs:02d}초{bo_tag}", attr)
+        po_tag = "  [자동 종료 ON]" if s.get("poweroff") else ""
+        wr(r, 2, f"세션 남은 시간: {mins}분 {secs:02d}초{bo_tag}{po_tag}", attr)
         r += 1
     r += 1  # 빈 줄
 
@@ -586,6 +589,7 @@ def draw(scr, s, last_ref, msg, msg_until):
         ]
         ROW3 = [
             ("[b] 암전",          True),
+            ("[P] 자동 종료",     True),
             ("[Q] 키오스크 종료", True),
             ("[r] 새로고침",      True),
             ("[q] UI 종료",       True),
@@ -732,6 +736,20 @@ def run(scr):
                     pass
                 msg = "→ 일시정지 암전 ON"
             msg_until = time.time() + 3
+        elif ch == ord("P") and s["running"]:
+            if os.path.exists(POWEROFF_FILE):
+                try:
+                    os.unlink(POWEROFF_FILE)
+                except Exception:
+                    pass
+                msg = "→ 시간 종료 시 자동 전원 끄기 OFF"
+            else:
+                try:
+                    open(POWEROFF_FILE, "w").close()
+                except Exception:
+                    pass
+                msg = "→ 시간 종료 시 자동 전원 끄기 ON (종료화면 3초 후 poweroff)"
+            msg_until = time.time() + 4
         elif ch == ord("Q") and s["running"]:
             if confirm_kill(scr):
                 kill_kiosk()

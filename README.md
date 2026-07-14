@@ -270,6 +270,8 @@ ssh user@kiosk-host python3 /home/jjejje/kids-machine/kids-control.py
 | `m` | 마우스 잠금 토글 | 키오스크 실행 중 |
 | `,` / `.` | 음량 내림 / 올림 | 키오스크 실행 중 |
 | `/` | 음소거 토글 | 키오스크 실행 중 |
+| `b` | 일시정지 중 화면 암전 토글 | 키오스크 실행 중 |
+| `P` | 시간 종료 시 자동 전원 끄기 토글 (기본 OFF) | 키오스크 실행 중 |
 | `Q` | 키오스크 종료 (확인 필요) | 키오스크 실행 중 |
 | `o` | 키오스크 시작 (설정 폼 입력) | 키오스크 정지 상태 |
 | `e` | 시간 연장 + 재시작 | 종료화면 표시 중 |
@@ -281,6 +283,12 @@ ssh user@kiosk-host python3 /home/jjejje/kids-machine/kids-control.py
 `kids-control`이 이 상태를 감지해 `[e]` / `[d]` 키를 표시합니다.
 `e`는 새 파라미터를 입력받은 뒤 종료화면에 SIGTERM을 보내(키보드 그랩 해제 후 닫힘)
 새 키오스크를 시작합니다.
+
+**자동 전원 끄기 (기본 비활성):** 키오스크 실행 중 `[P]`로 켜두면, 시간이 다 돼
+종료화면이 뜬 뒤 **3초 후 자동으로 `systemctl poweroff`**가 실행됩니다. 그 전에
+`[d]`(종료화면 닫기)나 Ctrl+Alt+Q로 먼저 닫으면 전원은 꺼지지 않습니다. 설정은
+`/tmp/kids-poweroff-enabled` 파일로 유지되며 껐다 켜기 전까지는 다음 세션에도
+그대로 이어집니다(재부팅하면 `/tmp`가 비워지므로 다시 기본값인 OFF로 돌아갑니다).
 
 ### 자동재생 동작 방식
 
@@ -301,7 +309,7 @@ Marionette 연결이 끊겨 루프가 깔끔하게 종료됩니다.
 | `setup-kids-login.sh` | 키오스크 프로필에서 최초 1회 구글 로그인 + 부모/아이 설정. |
 | `kids-input-dialog.py` | Tk 다이얼로그: 시간 / 자동재생 체크 / 채도 슬라이더. |
 | `kids-timer-bar.py` | 항상 위에 뜨는 상단 카운트다운 바. |
-| `kids-end-screen.py` | "시청 종료" 화면; 그랩 유지, Ctrl+Alt+Q 또는 원격 SIGTERM으로 닫힘. |
+| `kids-end-screen.py` | "시청 종료" 화면; 그랩 유지, Ctrl+Alt+Q 또는 원격 SIGTERM으로 닫힘. `--poweroff` 인자 시 3초 후 자동 전원 끄기. |
 | `kids-kb-grabber.py` | 키보드/마우스 잠금; 볼륨키, 스크린샷('p'), Ctrl+Alt+Q/K/M/S + 음량(`,`/`.`/`/`) 단축키, SIGUSR1/2 원격 토글. |
 | `kids-kiosk-exit.sh` | 타이머 만료 훅: 플래그 + Firefox 종료. |
 | `install.sh` | `kids` 계정 생성 및 autostart 등록. |

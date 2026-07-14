@@ -177,7 +177,10 @@ if [ -f "$TIMER_FLAG" ]; then
     done < "$POINTER_IDFILE"
 
     # 종료 화면 (내부에서 키보드 그랩 + Ctrl+Alt+Q 대기)
-    python3 /home/jjejje/kids-machine/kids-end-screen.py
+    # kids-control.py의 [P] 토글로 켜져 있으면 3초 노출 후 자동 poweroff
+    END_SCREEN_ARGS=""
+    [ -f /tmp/kids-poweroff-enabled ] && END_SCREEN_ARGS="--poweroff"
+    python3 /home/jjejje/kids-machine/kids-end-screen.py $END_SCREEN_ARGS
 
     # 마우스 복원
     cleanup_pointer

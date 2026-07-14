@@ -3,8 +3,12 @@
 시청 종료 화면 - 키보드 그랩 유지, Ctrl+Alt+Q 로만 닫힘
 """
 import signal
+import subprocess
+import sys
 import tkinter as tk
 from Xlib import X, display as xdisplay, XK
+
+AUTO_POWEROFF = "--poweroff" in sys.argv[1:]
 
 
 class EndScreen:
@@ -34,6 +38,8 @@ class EndScreen:
 
         self.win.after(100, self._poll)
         self.win.after(3000, self._heartbeat)
+        if AUTO_POWEROFF:
+            self.win.after(3000, self._auto_poweroff)
 
     def _grab_keyboard(self):
         try:
@@ -99,11 +105,22 @@ class EndScreen:
                     self.alt = False
         self.win.after(100, self._poll)
 
-    def _exit(self):
+    def _auto_poweroff(self):
+        # 부모가 그 사이 [d]/Ctrl+Alt+Q로 이미 닫았으면(그랩 해제됨) 건너뛴다
+        if self.grabbed:
+            self._exit(poweroff=True)
+
+    def _exit(self, poweroff=False):
         if self.grabbed:
             try:
                 self.d.ungrab_keyboard(X.CurrentTime)
                 self.d.flush()
+            except Exception:
+                pass
+        self.grabbed = False
+        if poweroff:
+            try:
+                subprocess.Popen(["systemctl", "poweroff"])
             except Exception:
                 pass
         self.win.quit()
