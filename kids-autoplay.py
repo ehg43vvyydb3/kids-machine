@@ -184,6 +184,7 @@ const v=fv(document); if(v&&v.paused){try{v.play();}catch(e){}} return v?1:0;
 # ── 일일 누적 시청 시간 (자정 리셋, 일시정지 제외) ────────────────────────────
 # kids-timer-bar.py(세션 UI)와 무관하게, 실제 재생 감시 루프를 도는 이 프로세스가
 # 살아있는 동안 계속 기록한다 — 세션 시간 조정/타이머바 재시작에 영향받지 않는다.
+# 파일 형식: {"YYYY-MM-DD": 누적초, ...} — 날짜별로 쌓아 나중에 조회 가능(kids-control.py).
 
 _daily         = None
 _daily_last_ts = None
@@ -196,12 +197,16 @@ def _today_str():
 def _load_daily():
     try:
         with open(DAILY_FILE) as f:
-            d = json.load(f)
-        if d.get("date") == _today_str():
-            return d
+            data = json.load(f)
     except Exception:
-        pass
-    return {"date": _today_str(), "seconds": 0}
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    if set(data.keys()) <= {"date", "seconds"}:
+        # 이전 형식(당일 단일 값) 마이그레이션 — 과거 날짜 기록은 없었으므로 오늘 값만 승계.
+        d = data.get("date")
+        return {d: data.get("seconds", 0)} if d else {}
+    return data
 
 
 def _save_daily(d):
@@ -222,10 +227,9 @@ def _tick_daily(is_paused):
         return
     dt = min(max(0.0, now - _daily_last_ts), 5.0)  # 순간 정지/드리프트 대비 상한
     _daily_last_ts = now
-    if _daily.get("date") != _today_str():
-        _daily = {"date": _today_str(), "seconds": 0}
     if not is_paused:
-        _daily["seconds"] += dt
+        today = _today_str()
+        _daily[today] = _daily.get(today, 0) + dt
     _save_daily(_daily)
 
 

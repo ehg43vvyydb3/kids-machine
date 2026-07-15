@@ -98,6 +98,8 @@ session — there is never more than one control instance running.
 
 ```
 ─────────────────  Kids Kiosk Control  ─────────────── 09:41:23
+  오늘 누적 시청: 1시간 12분
+
   ● RUNNING  (Firefox PID 12345)
   Marionette ✓  자동재생 ON (PID 12399)
   키보드 잠금 🔒   마우스 잠금 🔒   자동종료 OFF
@@ -114,7 +116,7 @@ session — there is never more than one control instance running.
   [s] 다음 영상   [p] 일시정지/재생   [f] 전체화면   [=] +5분   [-] -5분
   [k] 키보드 잠금   [m] 마우스 잠금   [P] 자동 종료   [,] 음량-   [.] 음량+   [/] 음소거
   [b] 암전   [Q] 키오스크 종료   [r] 새로고침   [q] UI 종료
-  [a] 즐겨찾기 추가   [L] 즐겨찾기 목록
+  [a] 즐겨찾기 추가   [L] 즐겨찾기 목록   [H] 시청 기록
 ```
 
 **Key bindings:**
@@ -135,6 +137,7 @@ session — there is never more than one control instance running.
 | `Q` | Kill the kiosk (with confirmation) | Kiosk running |
 | `a` | Add the currently playing video to favorites | Autoplay running |
 | `L` | Open the favorites list (play or delete an entry) | Always |
+| `H` | View daily watch-time history (by date) | Always |
 | `o` | Start kiosk (opens setup form) | Kiosk stopped |
 | `e` | Extend time + restart (end screen) | End screen showing |
 | `d` | Dismiss end screen | End screen showing |
@@ -281,6 +284,7 @@ ssh user@kiosk-host python3 /home/jjejje/kids-machine/kids-control.py
 | `Q` | 키오스크 종료 (확인 필요) | 키오스크 실행 중 |
 | `a` | 현재 재생 중인 영상을 즐겨찾기에 추가 | 자동재생 실행 중 |
 | `L` | 즐겨찾기 목록 열기 (재생 요청 / 삭제) | 항상 |
+| `H` | 날짜별 일일 시청 기록 조회 | 항상 |
 | `o` | 키오스크 시작 (설정 폼 입력) | 키오스크 정지 상태 |
 | `e` | 시간 연장 + 재시작 | 종료화면 표시 중 |
 | `d` | 종료화면 닫기 | 종료화면 표시 중 |
@@ -303,6 +307,12 @@ ssh user@kiosk-host python3 /home/jjejje/kids-machine/kids-control.py
 `↑`/`↓`로 고른 뒤 `Enter`를 누르면 `kids-autoplay.py`에 `play:<영상ID>` 명령이
 전달되어 (다음 2초 이내 확인 후) 지금 재생 중인 영상을 바로 건너뛰고 그 영상을
 재생합니다. `d`로 목록에서 삭제할 수 있습니다.
+
+**일일 시청 기록:** `kids-autoplay.py`가 재생을 감시하는 동안(일시정지 제외) 오늘
+누적 시청 시간을 `~/.kids-daily-watch.json`에 날짜별로 `{"YYYY-MM-DD": 누적초,
+...}` 형태로 계속 쌓습니다. 자정이 지나면 새 날짜 키로 기록되므로 이전 날짜
+기록은 지워지지 않고 그대로 남습니다. `[H]`로 열면 날짜별 누적 시청 시간을
+최근 순으로 볼 수 있습니다(조회 전용).
 
 ### 자동재생 동작 방식
 

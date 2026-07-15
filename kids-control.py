@@ -67,6 +67,18 @@ def _read_json(path):
         return {}
 
 
+def _load_daily_history():
+    """kids-autoplay.py 가 쓰는 {"YYYY-MM-DD": 누적초} 형식을 읽는다.
+    예전 형식({"date":..,"seconds":..})이면 오늘 값만 승계해 마이그레이션한다."""
+    data = _read_json(DAILY_FILE)
+    if not isinstance(data, dict):
+        return {}
+    if set(data.keys()) <= {"date", "seconds"}:
+        d = data.get("date")
+        return {d: data.get("seconds", 0)} if d else {}
+    return data
+
+
 def _pid_alive(path):
     try:
         pid = int(open(path).read().strip())
@@ -119,9 +131,9 @@ def gather():
               if "watch?v=" in url else "")
     age    = (time.time() - status["ts"]) if status.get("ts") else None
 
-    daily      = _read_json(DAILY_FILE)
+    daily      = _load_daily_history()
     today      = datetime.now().strftime("%Y-%m-%d")
-    daily_secs = daily.get("seconds", 0) if daily.get("date") == today else 0
+    daily_secs = daily.get(today, 0)
 
     return dict(
         running   = ff_pid is not None,
@@ -658,6 +670,7 @@ def draw(scr, s, last_ref, msg, msg_until):
         ROW4 = [
             ("[a] 즐겨찾기 추가", bool(s["ap_pid"]) and bool(s["vid_id"])),
             ("[L] 즐겨찾기 목록", True),
+            ("[H] 시청 기록",     True),
         ]
     elif s["endscreen"]:
         ROW1 = [
@@ -666,12 +679,12 @@ def draw(scr, s, last_ref, msg, msg_until):
         ]
         ROW2 = [("[r] 새로고침", True), ("[q] UI 종료", True)]
         ROW3 = []
-        ROW4 = [("[L] 즐겨찾기 목록", True)]
+        ROW4 = [("[L] 즐겨찾기 목록", True), ("[H] 시청 기록", True)]
     else:
         ROW1 = [("[o] 키오스크 시작", True)]
         ROW2 = [("[r] 새로고침", True), ("[q] UI 종료", True)]
         ROW3 = []
-        ROW4 = [("[L] 즐겨찾기 목록", True)]
+        ROW4 = [("[L] 즐겨찾기 목록", True), ("[H] 시청 기록", True)]
     frow = h - 6
     try:
         scr.addstr(frow, 0, "─" * (w - 1), C_HDR)
@@ -772,6 +785,63 @@ def browse_favorites(scr, can_play):
             it = items[idx]
             scr.nodelay(True)
             return (it.get("id"), it.get("title", ""))
+
+
+def browse_history(scr):
+    """일일 누적 시청 기록(날짜별, 최근 순)을 curses 화면에서 보여준다. 조회 전용."""
+    idx = 0
+    curses.curs_set(0)
+    scr.nodelay(False)
+    C1 = curses.color_pair(1)
+    days = sorted(_load_daily_history().items(), reverse=True)  # 최근 날짜부터
+    today = datetime.now().strftime("%Y-%m-%d")
+    while True:
+        if days:
+            idx = max(0, min(idx, len(days) - 1))
+
+        scr.erase()
+        h, w = scr.getmaxyx()
+        scr.addstr(0, 0, "─" * (w - 1), C1)
+        title = "  일일 시청 기록  "
+        scr.addstr(0, max(0, (w - _dw(title)) // 2), title, C1 | curses.A_BOLD)
+
+        if not days:
+            scr.addstr(2, 2, "기록이 없습니다.", curses.A_DIM)
+        else:
+            list_h = max(1, h - 6)
+            start  = max(0, min(idx - list_h // 2, max(0, len(days) - list_h)))
+            for i, (date, secs) in enumerate(days[start:start + list_h]):
+                row_i  = start + i
+                row    = 2 + i
+                sel    = row_i == idx
+                marker = "▶ " if sel else "  "
+                today_tag = "  (오늘)" if date == today else ""
+                label  = f"{marker}{date}  —  {fmt_hm(secs)}{today_tag}"
+                attr   = curses.A_REVERSE if sel else 0
+                try:
+                    scr.addstr(row, 2, label[:max(0, w - 4)], attr)
+                except curses.error:
+                    pass
+
+        frow = h - 3
+        try:
+            scr.addstr(frow, 0, "─" * (w - 1), C1)
+        except curses.error:
+            pass
+        try:
+            scr.addstr(frow + 1, 2, "↑/↓ 이동   ESC/q 뒤로", curses.A_DIM)
+        except curses.error:
+            pass
+        scr.refresh()
+
+        ch = scr.getch()
+        if ch in (27, ord("q")):
+            scr.nodelay(True)
+            return
+        elif ch in (curses.KEY_UP, ord("k")) and days:
+            idx = max(0, idx - 1)
+        elif ch in (curses.KEY_DOWN, ord("j")) and days:
+            idx = min(len(days) - 1, idx + 1)
 
 
 # ── 메인 루프 ────────────────────────────────────────────────────────────────
@@ -924,6 +994,9 @@ def run(scr):
                 play_favorite(vid)
                 msg = f"→ 재생 요청 전달됨: {ftitle or vid}"
                 msg_until = time.time() + 4
+            s = gather(); last_ref = time.time()
+        elif ch == ord("H"):
+            browse_history(scr)
             s = gather(); last_ref = time.time()
 
 
