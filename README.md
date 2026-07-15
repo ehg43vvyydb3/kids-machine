@@ -100,19 +100,21 @@ session — there is never more than one control instance running.
 ─────────────────  Kids Kiosk Control  ─────────────── 09:41:23
   ● RUNNING  (Firefox PID 12345)
   Marionette ✓  자동재생 ON (PID 12399)
-  키보드 잠금 🔒   마우스 잠금 🔒
+  키보드 잠금 🔒   마우스 잠금 🔒   자동종료 OFF
 
   세션 남은 시간: 18분 44초
 
-  영상 ID: abc123XYZ
+  ▶ Baby Shark Dance
+     영상 ID: abc123XYZ
   ▶  재생 중
   [████████░░░░░░░░░░░░░░░░░░░░] 03:12 / 11:05  (29%)
   예약 풀: 47개
 
 ─────────────────────────────────────────────────────
   [s] 다음 영상   [p] 일시정지/재생   [f] 전체화면   [=] +5분   [-] -5분
-  [k] 키보드 잠금   [m] 마우스 잠금   [,] 음량-   [.] 음량+   [/] 음소거
-  [Q] 키오스크 종료   [r] 새로고침   [q] UI 종료
+  [k] 키보드 잠금   [m] 마우스 잠금   [P] 자동 종료   [,] 음량-   [.] 음량+   [/] 음소거
+  [b] 암전   [Q] 키오스크 종료   [r] 새로고침   [q] UI 종료
+  [a] 즐겨찾기 추가   [L] 즐겨찾기 목록
 ```
 
 **Key bindings:**
@@ -126,9 +128,13 @@ session — there is never more than one control instance running.
 | `-` | Subtract 5 minutes | Kiosk running |
 | `k` | Toggle keyboard lock | Kiosk running |
 | `m` | Toggle mouse lock | Kiosk running |
+| `P` | Toggle auto power-off when time is up (default OFF) | Kiosk running |
 | `,` / `.` | Volume down / up | Kiosk running |
 | `/` | Toggle mute | Kiosk running |
+| `b` | Toggle screen blackout while paused | Kiosk running |
 | `Q` | Kill the kiosk (with confirmation) | Kiosk running |
+| `a` | Add the currently playing video to favorites | Autoplay running |
+| `L` | Open the favorites list (play or delete an entry) | Always |
 | `o` | Start kiosk (opens setup form) | Kiosk stopped |
 | `e` | Extend time + restart (end screen) | End screen showing |
 | `d` | Dismiss end screen | End screen showing |
@@ -268,11 +274,13 @@ ssh user@kiosk-host python3 /home/jjejje/kids-machine/kids-control.py
 | `-` | −5분 | 키오스크 실행 중 |
 | `k` | 키보드 잠금 토글 | 키오스크 실행 중 |
 | `m` | 마우스 잠금 토글 | 키오스크 실행 중 |
+| `P` | 시간 종료 시 자동 전원 끄기 토글 (기본 OFF) | 키오스크 실행 중 |
 | `,` / `.` | 음량 내림 / 올림 | 키오스크 실행 중 |
 | `/` | 음소거 토글 | 키오스크 실행 중 |
 | `b` | 일시정지 중 화면 암전 토글 | 키오스크 실행 중 |
-| `P` | 시간 종료 시 자동 전원 끄기 토글 (기본 OFF) | 키오스크 실행 중 |
 | `Q` | 키오스크 종료 (확인 필요) | 키오스크 실행 중 |
+| `a` | 현재 재생 중인 영상을 즐겨찾기에 추가 | 자동재생 실행 중 |
+| `L` | 즐겨찾기 목록 열기 (재생 요청 / 삭제) | 항상 |
 | `o` | 키오스크 시작 (설정 폼 입력) | 키오스크 정지 상태 |
 | `e` | 시간 연장 + 재시작 | 종료화면 표시 중 |
 | `d` | 종료화면 닫기 | 종료화면 표시 중 |
@@ -289,6 +297,12 @@ ssh user@kiosk-host python3 /home/jjejje/kids-machine/kids-control.py
 `[d]`(종료화면 닫기)나 Ctrl+Alt+Q로 먼저 닫으면 전원은 꺼지지 않습니다. 설정은
 `/tmp/kids-poweroff-enabled` 파일로 유지되며 껐다 켜기 전까지는 다음 세션에도
 그대로 이어집니다(재부팅하면 `/tmp`가 비워지므로 다시 기본값인 OFF로 돌아갑니다).
+
+**즐겨찾기:** 자동재생 중 마음에 드는 영상이 보이면 `[a]`로 제목·영상 ID를
+`~/.kids-favorites.json`에 저장합니다(재부팅해도 유지). `[L]`로 목록을 열어
+`↑`/`↓`로 고른 뒤 `Enter`를 누르면 `kids-autoplay.py`에 `play:<영상ID>` 명령이
+전달되어 (다음 2초 이내 확인 후) 지금 재생 중인 영상을 바로 건너뛰고 그 영상을
+재생합니다. `d`로 목록에서 삭제할 수 있습니다.
 
 ### 자동재생 동작 방식
 

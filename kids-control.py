@@ -22,6 +22,7 @@ GRAB_STATEFILE   = "/tmp/kids-grabber-state.json"
 BLACKOUT_FILE    = "/tmp/kids-blackout-enabled"
 POWEROFF_FILE    = "/tmp/kids-poweroff-enabled"
 DAILY_FILE       = "/home/jjejje/.kids-daily-watch.json"  # /tmp는 재부팅 시 초기화되므로 홈에 저장
+FAVORITES_FILE   = "/home/jjejje/.kids-favorites.json"     # 즐겨찾기 목록 — 같은 이유로 홈에 저장
 TIMERBAR_SCRIPT  = "/home/jjejje/kids-machine/kids-timer-bar.py"
 KIOSK_SCRIPT     = "/home/jjejje/kids-machine/kids-kiosk.sh"
 LOCK_FILE        = "/tmp/kids-control.lock"
@@ -137,6 +138,7 @@ def gather():
         remaining = remaining,
         url       = url,
         vid_id    = vid_id,
+        title     = status.get("title", ""),
         paused    = status.get("paused"),   # None = 정보 없음
         ct        = status.get("ct", 0),
         dur       = status.get("dur", 0),
@@ -157,6 +159,55 @@ def send_cmd(cmd):
         return True
     except Exception:
         return False
+
+
+# ── 즐겨찾기 ──────────────────────────────────────────────────────────────────
+
+def _load_favorites():
+    try:
+        with open(FAVORITES_FILE) as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data
+    except Exception:
+        pass
+    return []
+
+
+def _save_favorites(items):
+    try:
+        with open(FAVORITES_FILE, "w") as f:
+            json.dump(items, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def add_favorite(vid_id, title):
+    """현재 영상을 즐겨찾기에 추가한다. 이미 있으면 False."""
+    items = _load_favorites()
+    if any(it.get("id") == vid_id for it in items):
+        return False
+    items.append({
+        "id":    vid_id,
+        "title": title or "",
+        "added": datetime.now().strftime("%Y-%m-%d %H:%M"),
+    })
+    _save_favorites(items)
+    return True
+
+
+def remove_favorite(vid_id):
+    items = _load_favorites()
+    kept = [it for it in items if it.get("id") != vid_id]
+    if len(kept) == len(items):
+        return False
+    _save_favorites(kept)
+    return True
+
+
+def play_favorite(vid_id):
+    """kids-autoplay.py 에 지정 영상 재생을 요청한다."""
+    return send_cmd(f"play:{vid_id}")
 
 
 # ── 음량 ─────────────────────────────────────────────────────────────────────
@@ -512,14 +563,20 @@ def draw(scr, s, last_ref, msg, msg_until):
     wr(r, 2 + len(m_str), ap_str)
     r += 1
 
-    # 입력 잠금 상태 (kb-grabber 가 살아 있을 때만)
-    if s["running"] and s["grab_pid"]:
+    # 입력 잠금 상태 + 자동 전원 끄기 상태 (한 줄에 나란히)
+    if s["running"]:
         def lock_lbl(name, v):
             return f"{name} " + ("?" if v is None else "잠금 🔒" if v else "해제 🔓")
-        kb_s = lock_lbl("키보드", s["kb_locked"])
-        ms_s = lock_lbl("마우스", s["mouse_locked"])
-        wr(r, 2, kb_s, C_OK if s["kb_locked"] else C_WARN)
-        wr(r, 2 + _dw(kb_s) + 3, ms_s, C_OK if s["mouse_locked"] else C_WARN)
+        col = 2
+        if s["grab_pid"]:
+            kb_s = lock_lbl("키보드", s["kb_locked"])
+            ms_s = lock_lbl("마우스", s["mouse_locked"])
+            wr(r, col, kb_s, C_OK if s["kb_locked"] else C_WARN)
+            col += _dw(kb_s) + 3
+            wr(r, col, ms_s, C_OK if s["mouse_locked"] else C_WARN)
+            col += _dw(ms_s) + 3
+        po_s = "자동종료 " + ("ON ⚡" if s["poweroff"] else "OFF")
+        wr(r, col, po_s, C_OK if s["poweroff"] else C_WARN)
         r += 1
     r += 1
 
@@ -528,15 +585,19 @@ def draw(scr, s, last_ref, msg, msg_until):
         mins, secs = divmod(int(s["remaining"]), 60)
         attr   = C_WARN if s["remaining"] < 120 else 0
         bo_tag = "  [암전 ON]" if s.get("blackout") else ""
-        po_tag = "  [자동 종료 ON]" if s.get("poweroff") else ""
-        wr(r, 2, f"세션 남은 시간: {mins}분 {secs:02d}초{bo_tag}{po_tag}", attr)
+        wr(r, 2, f"세션 남은 시간: {mins}분 {secs:02d}초{bo_tag}", attr)
         r += 1
     r += 1  # 빈 줄
 
     # ── 영상 정보 ──────────────────────────────────────────────────────────────
     if s["url"]:
         if s["vid_id"]:
-            wr(r, 2, f"영상 ID: {s['vid_id']}")
+            if s.get("title"):
+                wr(r, 2, f"▶ {s['title']}", curses.A_BOLD)
+                r += 1
+                wr(r, 2, f"   영상 ID: {s['vid_id']}", DIM)
+            else:
+                wr(r, 2, f"영상 ID: {s['vid_id']}  (제목 로딩 중...)")
         else:
             wr(r, 2, "홈 화면 (썸네일 탐색 중)", DIM)
         r += 1
@@ -569,7 +630,7 @@ def draw(scr, s, last_ref, msg, msg_until):
 
     # ── 메시지 ────────────────────────────────────────────────────────────────
     if msg and time.time() < msg_until:
-        wr(max(r + 1, h - 6), 2, msg, C_WARN | curses.A_BOLD)
+        wr(max(r + 1, h - 7), 2, msg, C_WARN | curses.A_BOLD)
 
     # ── 푸터 (두 줄) ───────────────────────────────────────────────────────────
     if s["running"]:
@@ -583,16 +644,20 @@ def draw(scr, s, last_ref, msg, msg_until):
         ROW2 = [
             ("[k] 키보드 잠금",   bool(s["grab_pid"])),
             ("[m] 마우스 잠금",   bool(s["grab_pid"])),
+            ("[P] 자동 종료",     True),
             ("[,] 음량-",         True),
             ("[.] 음량+",         True),
             ("[/] 음소거",        True),
         ]
         ROW3 = [
             ("[b] 암전",          True),
-            ("[P] 자동 종료",     True),
             ("[Q] 키오스크 종료", True),
             ("[r] 새로고침",      True),
             ("[q] UI 종료",       True),
+        ]
+        ROW4 = [
+            ("[a] 즐겨찾기 추가", bool(s["ap_pid"]) and bool(s["vid_id"])),
+            ("[L] 즐겨찾기 목록", True),
         ]
     elif s["endscreen"]:
         ROW1 = [
@@ -601,16 +666,18 @@ def draw(scr, s, last_ref, msg, msg_until):
         ]
         ROW2 = [("[r] 새로고침", True), ("[q] UI 종료", True)]
         ROW3 = []
+        ROW4 = [("[L] 즐겨찾기 목록", True)]
     else:
         ROW1 = [("[o] 키오스크 시작", True)]
         ROW2 = [("[r] 새로고침", True), ("[q] UI 종료", True)]
         ROW3 = []
-    frow = h - 5
+        ROW4 = [("[L] 즐겨찾기 목록", True)]
+    frow = h - 6
     try:
         scr.addstr(frow, 0, "─" * (w - 1), C_HDR)
     except curses.error:
         pass
-    for ri, row in enumerate((ROW1, ROW2, ROW3), start=1):
+    for ri, row in enumerate((ROW1, ROW2, ROW3, ROW4), start=1):
         col = 1
         for label, active in row:
             attr = 0 if active else DIM
@@ -621,7 +688,7 @@ def draw(scr, s, last_ref, msg, msg_until):
             col += _dw(label) + 2
 
     ref_str = f"갱신 {int(time.time() - last_ref)}초 전  (자동 {REFRESH}s)"
-    wr(frow + 4, 1, ref_str, DIM)
+    wr(frow + 5, 1, ref_str, DIM)
 
     scr.refresh()
 
@@ -638,6 +705,73 @@ def confirm_kill(scr):
     ch = scr.getch()
     scr.nodelay(True)
     return ch in (ord("y"), ord("Y"))
+
+
+def browse_favorites(scr, can_play):
+    """즐겨찾기 목록을 curses 화면에서 탐색한다.
+    ↑/↓: 이동, Enter: 재생 요청(can_play=False면 무시), d: 삭제, ESC/q: 뒤로.
+    반환: 재생 요청된 (id, title) 또는 None(그냥 나가기)."""
+    idx = 0
+    curses.curs_set(0)
+    scr.nodelay(False)
+    C1 = curses.color_pair(1)
+    C2 = curses.color_pair(2)
+    while True:
+        items = _load_favorites()
+        if items:
+            idx = max(0, min(idx, len(items) - 1))
+
+        scr.erase()
+        h, w = scr.getmaxyx()
+        scr.addstr(0, 0, "─" * (w - 1), C1)
+        title = "  즐겨찾기 목록  "
+        scr.addstr(0, max(0, (w - _dw(title)) // 2), title, C1 | curses.A_BOLD)
+
+        if not items:
+            scr.addstr(2, 2, "저장된 영상이 없습니다.", curses.A_DIM)
+            scr.addstr(3, 2, "재생 중 [a]로 현재 영상을 추가할 수 있습니다.", curses.A_DIM)
+        else:
+            list_h = max(1, h - 6)
+            start  = max(0, min(idx - list_h // 2, max(0, len(items) - list_h)))
+            for i, it in enumerate(items[start:start + list_h]):
+                row_i  = start + i
+                row    = 2 + i
+                sel    = row_i == idx
+                marker = "▶ " if sel else "  "
+                label  = f"{marker}{it.get('title') or '(제목 없음)'}  [{it.get('id', '')}]"
+                attr   = curses.A_REVERSE if sel else (C2 if can_play else 0)
+                try:
+                    scr.addstr(row, 2, label[:max(0, w - 4)], attr)
+                except curses.error:
+                    pass
+
+        frow = h - 3
+        try:
+            scr.addstr(frow, 0, "─" * (w - 1), C1)
+        except curses.error:
+            pass
+        hint = ("↑/↓ 이동   Enter 재생 요청   d 삭제   ESC/q 뒤로" if can_play
+                else "↑/↓ 이동   d 삭제   ESC/q 뒤로  (재생하려면 자동재생 실행 중이어야 함)")
+        try:
+            scr.addstr(frow + 1, 2, hint, curses.A_DIM)
+        except curses.error:
+            pass
+        scr.refresh()
+
+        ch = scr.getch()
+        if ch in (27, ord("q")):
+            scr.nodelay(True)
+            return None
+        elif ch in (curses.KEY_UP, ord("k")) and items:
+            idx = max(0, idx - 1)
+        elif ch in (curses.KEY_DOWN, ord("j")) and items:
+            idx = min(len(items) - 1, idx + 1)
+        elif ch == ord("d") and items:
+            remove_favorite(items[idx].get("id"))
+        elif ch in (10, 13) and items and can_play:
+            it = items[idx]
+            scr.nodelay(True)
+            return (it.get("id"), it.get("title", ""))
 
 
 # ── 메인 루프 ────────────────────────────────────────────────────────────────
@@ -777,6 +911,19 @@ def run(scr):
             else:
                 msg, msg_until = "취소됨", time.time() + 2
             time.sleep(1.5)
+            s = gather(); last_ref = time.time()
+        elif ch == ord("a") and s["running"] and s["ap_pid"] and s["vid_id"]:
+            ok = add_favorite(s["vid_id"], s.get("title") or "")
+            msg = "→ 즐겨찾기에 추가됨" if ok else "→ 이미 즐겨찾기에 있음"
+            msg_until = time.time() + 3
+        elif ch == ord("L"):
+            can_play = bool(s["running"] and s["ap_pid"])
+            result = browse_favorites(scr, can_play)
+            if result:
+                vid, ftitle = result
+                play_favorite(vid)
+                msg = f"→ 재생 요청 전달됨: {ftitle or vid}"
+                msg_until = time.time() + 4
             s = gather(); last_ref = time.time()
 
 

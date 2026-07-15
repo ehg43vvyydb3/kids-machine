@@ -11,13 +11,14 @@ YouTube Kids 자동재생 — Firefox Marionette(내장 자동화)로 DOM을 보
      - 재생 중 watch 페이지의 추천 썸네일을 풀에 계속 보충한다.
      - 아이가 일시정지하면 그 영상은 그대로 둔다(끝나야 다음으로 넘어감).
      - 로딩 실패 등으로 재생이 한참 멈춰 있으면 다음 영상으로 건너뛴다.
-  4) /tmp/kids-autoplay-cmd 파일을 주기적으로 확인해 skip/pause/resume/fullscreen
-     명령을 처리한다 (kids-control.py 가 기록하는 파일 IPC).
+  4) /tmp/kids-autoplay-cmd 파일을 주기적으로 확인해 skip/pause/resume/fullscreen/
+     play:<영상ID> 명령을 처리한다 (kids-control.py 가 기록하는 파일 IPC).
+     play:<ID>는 kids-control.py 즐겨찾기 목록에서 특정 영상 재생을 요청할 때 쓰인다.
 
 Firefox 가 닫히면(Marionette 연결 끊김) 조용히 종료한다.
 종료코드: 0 정상 종료 / 1 영상을 끝내 못 찾음
 """
-import socket, json, os, sys, time, random
+import re, socket, json, os, sys, time, random
 from collections import deque
 
 HOST, PORT   = "127.0.0.1", 2828
@@ -160,6 +161,13 @@ if (v && v.requestFullscreen) { try { v.requestFullscreen(); return 'video'; } c
 return 'none';
 """
 
+# 현재 재생 중인 영상 제목 (탭 타이틀에서 " - YouTube Kids" 접미사 제거).
+TITLE_JS = r"""
+let t = document.title || '';
+t = t.replace(/\s*-\s*YouTube Kids\s*$/i, '');
+return t;
+"""
+
 PAUSE_JS = r"""
 function fv(r){const v=r.querySelector('video');if(v)return v;
   for(const e of r.querySelectorAll('*')){if(e.shadowRoot){const x=fv(e.shadowRoot);if(x)return x;}}return null;}
@@ -223,11 +231,12 @@ def _tick_daily(is_paused):
 
 # ── 상태 파일 / 명령 파일 IPC ────────────────────────────────────────────────
 
-def _write_status(url, st, pool_size):
+def _write_status(url, st, pool_size, title=""):
     """kids-control.py 가 읽는 상태 파일을 갱신한다."""
     try:
         obj = {
             "url":       url or "",
+            "title":     title or "",
             "paused":    st.get("paused"),
             "ct":        st.get("ct", 0),
             "dur":       st.get("dur", 0),
@@ -242,19 +251,26 @@ def _write_status(url, st, pool_size):
         pass
 
 
+_VIDEO_ID_RE = re.compile(r"^[\w-]{5,40}$")
+
+
 def _check_cmd(m):
-    """명령 파일을 읽고 실행한다. skip 명령이면 True 반환."""
+    """명령 파일을 읽고 실행한다.
+    반환: '' (계속 진행) / 'skip' (다음 영상으로) / 'play:<ID>' (지정 영상 재생, kids-control.py 즐겨찾기 목록에서 요청)"""
     try:
         if not os.path.exists(CMD_FILE):
-            return False
+            return ""
         with open(CMD_FILE) as f:
             cmd = f.read().strip()
         os.unlink(CMD_FILE)
     except Exception:
-        return False
+        return ""
 
     if cmd == "skip":
-        return True
+        return "skip"
+    if cmd.startswith("play:"):
+        vid = cmd.split(":", 1)[1].strip()
+        return cmd if _VIDEO_ID_RE.match(vid) else ""
     try:
         if cmd == "pause":
             m.execute_script(PAUSE_JS)
@@ -266,7 +282,7 @@ def _check_cmd(m):
         raise
     except Exception:
         pass
-    return False
+    return ""
 
 
 # ── Marionette 유틸 ──────────────────────────────────────────────────────────
@@ -287,6 +303,15 @@ def video_state(m, nudge=False):
         raise
     except Exception:
         return {}
+
+
+def get_title(m):
+    try:
+        return m.execute_script(TITLE_JS) or ""
+    except IOError:
+        raise
+    except Exception:
+        return ""
 
 
 def go_fullscreen(m):
@@ -331,18 +356,19 @@ def start_playing(m, url):
     return playing
 
 
-def monitor_until_done(m, url, pool, max_stall=40):
+def monitor_until_done(m, url, pool, title="", max_stall=40):
     """현재 영상이 끝날 때까지 감시. 2초마다 상태 기록 + 명령 처리.
-    반환: 'ended' / 'stall' / 'novideo' / 'skip'"""
+    반환: 'ended' / 'stall' / 'novideo' / 'skip' / 'play:<ID>'"""
     last_ct      = -1.0
     stall_since  = time.time()
     novideo_since = None
     while True:
         time.sleep(2)
-        if _check_cmd(m):
-            return "skip"
+        cmd_result = _check_cmd(m)
+        if cmd_result:
+            return cmd_result
         st = video_state(m)
-        _write_status(url, st, len(pool))
+        _write_status(url, st, len(pool), title)
         _tick_daily(bool(st.get("paused")))
         if not st.get("ok"):
             novideo_since = novideo_since or time.time()
@@ -393,18 +419,27 @@ def main():
         return 1
 
     recent = deque(maxlen=15)
+    next_target = None  # play:<ID> 명령으로 지정된 다음 영상 (없으면 무작위 선택)
     print("autoplay: 시작 — 풀 %d개" % len(pool))
 
     try:
         while True:
-            target = pick(pool, recent)
+            if next_target:
+                target = next_target
+                next_target = None
+            else:
+                target = pick(pool, recent)
             recent.append(target)
             _write_status(target, {"ok": 0}, len(pool))
             print("autoplay: ▶ %s (풀 %d)" % (target, len(pool)))
             start_playing(m, target)
+            title = get_title(m)
 
-            result = monitor_until_done(m, target, pool)
+            result = monitor_until_done(m, target, pool, title)
             print("autoplay: ◼ %s → %s" % (target, result))
+
+            if result.startswith("play:"):
+                next_target = "https://www.youtubekids.com/watch?v=" + result.split(":", 1)[1].strip()
 
             more = collect_thumbs(m)
             if more:
