@@ -23,6 +23,7 @@ BLACKOUT_FILE    = "/tmp/kids-blackout-enabled"
 POWEROFF_FILE    = "/tmp/kids-poweroff-enabled"
 DAILY_FILE       = "/home/jjejje/.kids-daily-watch.json"  # /tmp는 재부팅 시 초기화되므로 홈에 저장
 FAVORITES_FILE   = "/home/jjejje/.kids-favorites.json"     # 즐겨찾기 목록 — 같은 이유로 홈에 저장
+SKIP_LOG_FILE    = "/home/jjejje/.kids-skip-log.json"       # 스킵한 영상 기록 — 같은 이유로 홈에 저장
 TIMERBAR_SCRIPT  = "/home/jjejje/kids-machine/kids-timer-bar.py"
 KIOSK_SCRIPT     = "/home/jjejje/kids-machine/kids-kiosk.sh"
 LOCK_FILE        = "/tmp/kids-control.lock"
@@ -220,6 +221,28 @@ def remove_favorite(vid_id):
 def play_favorite(vid_id):
     """kids-autoplay.py 에 지정 영상 재생을 요청한다."""
     return send_cmd(f"play:{vid_id}")
+
+
+# ── 스킵 목록 ──────────────────────────────────────────────────────────────────
+# kids-autoplay.py 가 [s] 로 건너뛴 영상을 시간순(오래된 것부터)으로 append 한다.
+
+def _load_skip_log():
+    try:
+        with open(SKIP_LOG_FILE) as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data
+    except Exception:
+        pass
+    return []
+
+
+def _save_skip_log(items):
+    try:
+        with open(SKIP_LOG_FILE, "w") as f:
+            json.dump(items, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 
 # ── 음량 ─────────────────────────────────────────────────────────────────────
@@ -671,6 +694,7 @@ def draw(scr, s, last_ref, msg, msg_until):
             ("[a] 즐겨찾기 추가", bool(s["ap_pid"]) and bool(s["vid_id"])),
             ("[L] 즐겨찾기 목록", True),
             ("[H] 시청 기록",     True),
+            ("[S] 스킵 목록",     True),
         ]
     elif s["endscreen"]:
         ROW1 = [
@@ -679,12 +703,12 @@ def draw(scr, s, last_ref, msg, msg_until):
         ]
         ROW2 = [("[r] 새로고침", True), ("[q] UI 종료", True)]
         ROW3 = []
-        ROW4 = [("[L] 즐겨찾기 목록", True), ("[H] 시청 기록", True)]
+        ROW4 = [("[L] 즐겨찾기 목록", True), ("[H] 시청 기록", True), ("[S] 스킵 목록", True)]
     else:
         ROW1 = [("[o] 키오스크 시작", True)]
         ROW2 = [("[r] 새로고침", True), ("[q] UI 종료", True)]
         ROW3 = []
-        ROW4 = [("[L] 즐겨찾기 목록", True), ("[H] 시청 기록", True)]
+        ROW4 = [("[L] 즐겨찾기 목록", True), ("[H] 시청 기록", True), ("[S] 스킵 목록", True)]
     frow = h - 6
     try:
         scr.addstr(frow, 0, "─" * (w - 1), C_HDR)
@@ -844,6 +868,74 @@ def browse_history(scr):
             idx = min(len(days) - 1, idx + 1)
 
 
+def browse_skips(scr, can_play):
+    """스킵한 영상 목록을 최근 순으로 보여준다.
+    ↑/↓: 이동, Enter: 재생 요청(can_play=False면 무시), d: 목록에서 삭제, ESC/q: 뒤로."""
+    idx = 0
+    curses.curs_set(0)
+    scr.nodelay(False)
+    C1 = curses.color_pair(1)
+    while True:
+        items = _load_skip_log()
+        order = list(range(len(items) - 1, -1, -1))  # 최근에 스킵한 것부터
+        if order:
+            idx = max(0, min(idx, len(order) - 1))
+
+        scr.erase()
+        h, w = scr.getmaxyx()
+        scr.addstr(0, 0, "─" * (w - 1), C1)
+        title = "  스킵한 영상 목록  "
+        scr.addstr(0, max(0, (w - _dw(title)) // 2), title, C1 | curses.A_BOLD)
+
+        if not order:
+            scr.addstr(2, 2, "스킵 기록이 없습니다.", curses.A_DIM)
+        else:
+            list_h = max(1, h - 6)
+            start  = max(0, min(idx - list_h // 2, max(0, len(order) - list_h)))
+            for i, orig_i in enumerate(order[start:start + list_h]):
+                it     = items[orig_i]
+                row_i  = start + i
+                row    = 2 + i
+                sel    = row_i == idx
+                marker = "▶ " if sel else "  "
+                label  = (f"{marker}{it.get('title') or '(제목 없음)'}  "
+                          f"[{it.get('id', '')}]  {it.get('ts', '')}")
+                attr   = curses.A_REVERSE if sel else 0
+                try:
+                    scr.addstr(row, 2, label[:max(0, w - 4)], attr)
+                except curses.error:
+                    pass
+
+        frow = h - 3
+        try:
+            scr.addstr(frow, 0, "─" * (w - 1), C1)
+        except curses.error:
+            pass
+        hint = ("↑/↓ 이동   Enter 재생 요청   d 삭제   ESC/q 뒤로" if can_play
+                else "↑/↓ 이동   d 삭제   ESC/q 뒤로  (재생하려면 자동재생 실행 중이어야 함)")
+        try:
+            scr.addstr(frow + 1, 2, hint, curses.A_DIM)
+        except curses.error:
+            pass
+        scr.refresh()
+
+        ch = scr.getch()
+        if ch in (27, ord("q")):
+            scr.nodelay(True)
+            return None
+        elif ch in (curses.KEY_UP, ord("k")) and order:
+            idx = max(0, idx - 1)
+        elif ch in (curses.KEY_DOWN, ord("j")) and order:
+            idx = min(len(order) - 1, idx + 1)
+        elif ch == ord("d") and order:
+            del items[order[idx]]
+            _save_skip_log(items)
+        elif ch in (10, 13) and order and can_play:
+            it = items[order[idx]]
+            scr.nodelay(True)
+            return (it.get("id"), it.get("title", ""))
+
+
 # ── 메인 루프 ────────────────────────────────────────────────────────────────
 
 def run(scr):
@@ -997,6 +1089,15 @@ def run(scr):
             s = gather(); last_ref = time.time()
         elif ch == ord("H"):
             browse_history(scr)
+            s = gather(); last_ref = time.time()
+        elif ch == ord("S"):
+            can_play = bool(s["running"] and s["ap_pid"])
+            result = browse_skips(scr, can_play)
+            if result:
+                vid, ftitle = result
+                play_favorite(vid)
+                msg = f"→ 재생 요청 전달됨: {ftitle or vid}"
+                msg_until = time.time() + 4
             s = gather(); last_ref = time.time()
 
 

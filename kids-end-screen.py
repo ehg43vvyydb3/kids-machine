@@ -1,14 +1,40 @@
 #!/usr/bin/env python3
 """
 시청 종료 화면 - 키보드 그랩 유지, Ctrl+Alt+Q 로만 닫힘
+Ctrl+Alt+H 로 일일 시청 기록(날짜별)을 화면에서 바로 볼 수 있다.
 """
+import json
 import signal
 import subprocess
 import sys
 import tkinter as tk
+from datetime import datetime
 from Xlib import X, display as xdisplay, XK
 
 AUTO_POWEROFF = "--poweroff" in sys.argv[1:]
+DAILY_FILE    = "/home/jjejje/.kids-daily-watch.json"  # kids-autoplay.py 가 기록
+
+
+def _load_daily_history():
+    """kids-autoplay.py 가 쓰는 {"YYYY-MM-DD": 누적초} 형식을 읽는다.
+    예전 형식({"date":..,"seconds":..})이면 오늘 값만 승계해 마이그레이션한다."""
+    try:
+        with open(DAILY_FILE) as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    if set(data.keys()) <= {"date", "seconds"}:
+        d = data.get("date")
+        return {d: data.get("seconds", 0)} if d else {}
+    return data
+
+
+def _fmt_hm(secs):
+    total_min = int(secs) // 60
+    h, m = divmod(total_min, 60)
+    return f"{h}시간 {m}분" if h else f"{m}분"
 
 
 class EndScreen:
@@ -17,6 +43,7 @@ class EndScreen:
         self.ctrl = False
         self.alt = False
         self.grabbed = False
+        self.history_win = None
 
         self.win = tk.Tk()
         self.win.title("")
@@ -67,6 +94,50 @@ class EndScreen:
                  font=('Sans', 32),
                  fg='#6b7280', bg='#111827').pack()
 
+        today = datetime.now().strftime("%Y-%m-%d")
+        today_secs = _load_daily_history().get(today, 0)
+        tk.Label(frame,
+                 text=f"오늘 총 {_fmt_hm(today_secs)} 시청했어요",
+                 font=('Sans', 22),
+                 fg='#9ca3af', bg='#111827').pack(pady=(24, 0))
+
+        tk.Label(self.win,
+                 text="Ctrl+Alt+H: 지난 시청 기록 보기",
+                 font=('Sans', 12),
+                 fg='#374151', bg='#111827').place(relx=0.5, rely=0.96, anchor='center')
+
+    def _toggle_history(self):
+        if self.history_win is not None:
+            self.history_win.destroy()
+            self.history_win = None
+            return
+
+        days = sorted(_load_daily_history().items(), reverse=True)[:14]
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        win = tk.Toplevel(self.win, bg='#111827')
+        win.overrideredirect(True)
+        win.attributes('-topmost', True)
+        w, h = 420, 60 + 34 * max(1, len(days))
+        sw, sh = self.win.winfo_screenwidth(), self.win.winfo_screenheight()
+        win.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
+
+        tk.Label(win, text="일일 시청 기록", font=('Sans', 20, 'bold'),
+                 fg='#f9fafb', bg='#111827').pack(pady=(16, 8))
+
+        if not days:
+            tk.Label(win, text="기록이 없습니다.", font=('Sans', 14),
+                     fg='#9ca3af', bg='#111827').pack()
+        else:
+            for date, secs in days:
+                tag = "  (오늘)" if date == today else ""
+                tk.Label(win, text=f"{date}   {_fmt_hm(secs)}{tag}",
+                         font=('Sans', 14),
+                         fg='#e5e7eb', bg='#111827').pack(anchor='center')
+
+        win.update()
+        self.history_win = win
+
     def _handle_sigcont(self, signum, frame):
         # 시그널 핸들러에서는 tkinter를 직접 호출하면 안 되므로 after로 위임
         self.win.after(0, self._on_resume)
@@ -97,6 +168,8 @@ class EndScreen:
                 elif ks == XK.XK_q and self.ctrl and self.alt:
                     self._exit()
                     return
+                elif ks == XK.XK_h and self.ctrl and self.alt:
+                    self._toggle_history()
             elif ev.type == X.KeyRelease:
                 ks = self.d.keycode_to_keysym(ev.detail, 0)
                 if ks in (XK.XK_Control_L, XK.XK_Control_R):

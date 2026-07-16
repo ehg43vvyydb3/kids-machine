@@ -14,6 +14,8 @@ YouTube Kids 자동재생 — Firefox Marionette(내장 자동화)로 DOM을 보
   4) /tmp/kids-autoplay-cmd 파일을 주기적으로 확인해 skip/pause/resume/fullscreen/
      play:<영상ID> 명령을 처리한다 (kids-control.py 가 기록하는 파일 IPC).
      play:<ID>는 kids-control.py 즐겨찾기 목록에서 특정 영상 재생을 요청할 때 쓰인다.
+     skip 명령으로 건너뛴 영상은 ~/.kids-skip-log.json 에 남아 kids-control.py
+     에서 조회할 수 있다.
 
 Firefox 가 닫히면(Marionette 연결 끊김) 조용히 종료한다.
 종료코드: 0 정상 종료 / 1 영상을 끝내 못 찾음
@@ -21,10 +23,12 @@ Firefox 가 닫히면(Marionette 연결 끊김) 조용히 종료한다.
 import re, socket, json, os, sys, time, random
 from collections import deque
 
-HOST, PORT   = "127.0.0.1", 2828
-STATUS_FILE  = "/tmp/kids-autoplay-status.json"
-CMD_FILE     = "/tmp/kids-autoplay-cmd"
-DAILY_FILE   = "/home/jjejje/.kids-daily-watch.json"  # /tmp는 재부팅 시 초기화되므로 홈에 저장
+HOST, PORT    = "127.0.0.1", 2828
+STATUS_FILE   = "/tmp/kids-autoplay-status.json"
+CMD_FILE      = "/tmp/kids-autoplay-cmd"
+DAILY_FILE    = "/home/jjejje/.kids-daily-watch.json"  # /tmp는 재부팅 시 초기화되므로 홈에 저장
+SKIP_LOG_FILE = "/home/jjejje/.kids-skip-log.json"     # 같은 이유로 홈에 저장
+SKIP_LOG_MAX  = 200  # 최근 N개만 유지
 
 
 class Marionette:
@@ -231,6 +235,36 @@ def _tick_daily(is_paused):
         today = _today_str()
         _daily[today] = _daily.get(today, 0) + dt
     _save_daily(_daily)
+
+
+# ── 스킵 목록 (부모가 [s]로 건너뛴 영상 기록, kids-control.py 에서 조회) ────────
+
+def _vid_id_from_url(url):
+    return url.split("watch?v=")[-1].split("&")[0] if "watch?v=" in url else ""
+
+
+def _log_skip(url, title):
+    vid = _vid_id_from_url(url)
+    if not vid:
+        return
+    try:
+        with open(SKIP_LOG_FILE) as f:
+            items = json.load(f)
+        if not isinstance(items, list):
+            items = []
+    except Exception:
+        items = []
+    items.append({
+        "id":    vid,
+        "title": title or "",
+        "ts":    time.strftime("%Y-%m-%d %H:%M"),
+    })
+    items = items[-SKIP_LOG_MAX:]
+    try:
+        with open(SKIP_LOG_FILE, "w") as f:
+            json.dump(items, f, ensure_ascii=False)
+    except Exception:
+        pass
 
 
 # ── 상태 파일 / 명령 파일 IPC ────────────────────────────────────────────────
@@ -441,6 +475,9 @@ def main():
 
             result = monitor_until_done(m, target, pool, title)
             print("autoplay: ◼ %s → %s" % (target, result))
+
+            if result == "skip":
+                _log_skip(target, title)
 
             if result.startswith("play:"):
                 next_target = "https://www.youtubekids.com/watch?v=" + result.split(":", 1)[1].strip()
