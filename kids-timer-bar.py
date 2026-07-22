@@ -17,6 +17,10 @@ TIMER_PIDFILE = "/tmp/kids-kiosk-timer.pid"
 TIMER_FLAG    = "/tmp/kids-timer-ended"
 BLACKOUT_FILE = "/tmp/kids-blackout-enabled"
 
+# 시간 재조정 시 종료할 재생 프로세스 패턴. 기본은 온라인(YouTube Kids),
+# 오프라인 세션은 KIDS_KILL_PATTERN=kids-mpv.sock 로 mpv 를 가리킨다.
+KILL_PATTERN  = os.environ.get("KIDS_KILL_PATTERN", "youtubekids.com")
+
 
 def set_always_on_top(root):
     d = XDisplay()
@@ -63,7 +67,7 @@ def _extend_kill_timer(new_end):
     new_secs = max(1, int(new_end - time.time()))
     proc = subprocess.Popen(
         ["bash", "-c",
-         f"sleep {new_secs} && touch {TIMER_FLAG} && pkill -f youtubekids.com"],
+         f"sleep {new_secs} && touch {TIMER_FLAG} && pkill -f {KILL_PATTERN}"],
         close_fds=True, start_new_session=True,
     )
     try:

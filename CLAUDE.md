@@ -17,6 +17,15 @@
 
 `kids-control.py` — 부모용 curses TUI. 시그널/명령파일로 위 프로세스들을 제어.
 
+### 오프라인 변형 (인터넷 없이)
+
+`kids-offline.sh` — 위 오케스트레이터의 **병렬본**. Firefox+YouTube Kids+
+`kids-autoplay.py` 대신 **mpv** 로 로컬 영상(`~/kids-videos`, `KIDS_VIDEO_DIR`)을
+전체화면·시간제한·플레이리스트 자동재생으로 튼다. 잠금/타이머바/종료화면/절전차단은
+온라인용 스크립트를 **그대로 재사용**한다. 영상은 `kids-download.sh`(yt-dlp)로
+부모가 미리 받아둔다. mpv 필요(`sudo apt install mpv`), 다운로드 의존성은 함정 8 참고.
+mpv 제어는 IPC 유닉스 소켓 `/tmp/kids-mpv.sock`(skip=playlist-next 등).
+
 ### 프로세스 간 통신 (모두 `/tmp` 파일)
 - `kids-grabber-state.json` — grabber가 현재 잠금 상태 export
 - `kids-autoplay-cmd` — autoplay에 보내는 명령(skip/pause/resume/fullscreen)
@@ -26,6 +35,15 @@
 - grabber 토글: `SIGUSR1`=키보드, `SIGUSR2`=마우스
 
 ## 함정 (유의사항)
+
+### 0. 공유 스크립트의 재생엔진 결합부는 env 로만 분기한다 (온라인/오프라인)
+`kids-kb-grabber.py`·`kids-timer-bar.py`는 온라인/오프라인이 **공유**한다.
+재생엔진에 묶인 두 지점을 env 로 파라미터화했으니 **기본값(온라인)을 깨지 말 것**:
+- `KIDS_KILL_PATTERN` (기본 `youtubekids.com`) — 종료(Q)·시간재조정 시 `pkill -f` 대상.
+  오프라인은 `kids-mpv.sock`(mpv argv 에 든 소켓 경로) 로 설정.
+- `KIDS_MPV_SOCK` — 설정되면 skip 을 파일명령 대신 mpv IPC(`playlist-next`)로 보냄.
+env 없이 실행하면 온라인 동작 그대로. 이 두 스크립트를 고칠 때 하드코딩으로
+되돌리지 말 것(오프라인이 깨진다).
 
 ### 1. 키보드 grab과 화면잠금(light-locker)은 충돌한다
 grabber/end-screen은 X 키보드를 **독점 grab**한다. 동시에 `light-locker` 같은
@@ -73,6 +91,19 @@ YouTube Kids 로그인 상태는 쿠키가 아니라 storage(localStorage/Indexe
 **같은 날 안에서 재부팅을 넘겨서도 유지돼야 하는 값**을 `/tmp`에 두면 재부팅 시 0으로
 리셋되는 버그가 난다(실제로 겪음). 그런 값은 `/home/jjejje/.kids-daily-watch.json`처럼
 `/tmp` 밖의 홈 디렉터리에 저장한다.
+
+### 8. 오프라인 다운로드는 최신 yt-dlp + deno + ffmpeg 3종이 필요하다 ★
+`kids-download.sh`(yt-dlp)로 YouTube 영상을 받으려면:
+- **최신 yt-dlp**: 배포판 apt 판(예: 2024.04)은 금세 낡아 iOS/android player API 가
+  거부돼 추출 자체가 막힌다. standalone 최신 바이너리를 `~/.local/bin/yt-dlp` 에 둔다
+  (release 의 `yt-dlp` 파일 받아 chmod +x). 스크립트가 이 경로를 우선 사용.
+- **deno (JS 런타임)**: 없으면 추출은 되지만 다운로드 URL 이 **403 Forbidden**.
+  YouTube n-param 서명 챌린지를 풀 JS 런타임이 필요하다. userspace 로 설치 가능
+  (`~/.deno/bin`, sudo 불필요). 스크립트가 있으면 PATH 에 얹어 자동 감지.
+- **ffmpeg**: 없으면 영상/음성 분리 스트림을 병합 못해 통합(progressive) 단일
+  포맷(대개 720p)만 받는다(무음 파일 방지 위해 스크립트가 자동으로 그렇게 폴백).
+  있으면 최대 1080p 병합. mpv **재생** 자체엔 ffmpeg 불필요(내장 디코더).
+- mpv 옵션은 채도 조절이 `--saturate` 가 아니라 **`--saturation`**(-100..0, 0=원본).
 
 ## 검증
 - 셸: `bash -n kids-kiosk.sh`, `bash -n install.sh`

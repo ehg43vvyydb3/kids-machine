@@ -27,6 +27,14 @@ POINTER_IDFILE = '/tmp/kids-pointer-ids.txt'
 STATE_FILE     = '/tmp/kids-grabber-state.json'
 AUTOPLAY_CMD   = '/tmp/kids-autoplay-cmd'  # kids-autoplay.py 와 약속된 명령 파일
 
+# ── 재생 엔진 결합부 (온라인=YouTube Kids / 오프라인=mpv) ─────────────
+# 기본값은 온라인용이라 값을 안 주면 기존 동작 그대로. 오프라인 세션
+# (kids-offline.sh)은 아래 두 env를 설정해 대상을 mpv 로 바꾼다.
+#   KIDS_KILL_PATTERN : 종료(Q) 시 pkill -f 대상 (기본 youtubekids.com)
+#   KIDS_MPV_SOCK     : 설정되면 skip 을 mpv IPC(playlist-next)로 보냄
+KILL_PATTERN   = os.environ.get('KIDS_KILL_PATTERN', 'youtubekids.com')
+MPV_SOCK       = os.environ.get('KIDS_MPV_SOCK', '')
+
 _display      = None
 _root         = None
 _kb_locked    = True
@@ -55,9 +63,26 @@ def _mute():
                      close_fds=True)
 
 
+def _mpv_cmd(cmd):
+    """mpv IPC(유닉스 소켓)로 JSON 명령 1줄 전송. socat 없이 stdlib 만 사용."""
+    import socket
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(1)
+        s.connect(MPV_SOCK)
+        s.sendall((json.dumps({'command': cmd}) + '\n').encode())
+        s.close()
+    except OSError:
+        pass
+
+
 def _skip_video():
-    """kids-autoplay.py 에 다음 영상으로 건너뛰라는 명령을 파일로 전달.
-    (kids-control.py 의 send_cmd('skip') 과 동일한 메커니즘)"""
+    """다음 영상으로 건너뛰기.
+    오프라인(MPV_SOCK 설정)은 mpv IPC 로, 온라인은 kids-autoplay.py 에
+    파일 명령으로 전달. (kids-control.py 의 send_cmd('skip') 과 동일)"""
+    if MPV_SOCK:
+        _mpv_cmd(['playlist-next', 'force'])
+        return
     try:
         with open(AUTOPLAY_CMD, 'w') as f:
             f.write('skip')
@@ -298,7 +323,7 @@ def main():
                     elif ks in (XK.XK_Alt_L, XK.XK_Alt_R):
                         _alt = True
                     elif _ctrl and _alt and ks == XK.XK_q:
-                        subprocess.run(['pkill', '-f', 'youtubekids.com'], check=False)
+                        subprocess.run(['pkill', '-f', KILL_PATTERN], check=False)
                         _cleanup_exit()
                         return
                     elif _ctrl and _alt and ks == XK.XK_k:
@@ -338,7 +363,7 @@ def main():
                 else:
                     # 키보드 잠금 해제 상태 — XGrabKey 이벤트만 도착
                     if ks == XK.XK_q:
-                        subprocess.run(['pkill', '-f', 'youtubekids.com'], check=False)
+                        subprocess.run(['pkill', '-f', KILL_PATTERN], check=False)
                         _cleanup_exit()
                         return
                     elif ks == XK.XK_k:

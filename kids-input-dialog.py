@@ -5,9 +5,12 @@ stdout: "분,True|False,채도(0-100)"  exitcode: 0=확인 1=취소
 """
 import tkinter as tk
 import sys
+import os
 
 root = tk.Tk()
-root.title("유튜브 키즈")
+# 제목은 온라인/오프라인 공용이라 env 로 바꿀 수 있게 한다.
+# 기본값(온라인)은 그대로, 오프라인 세션(kids-offline.sh)은 " - 오프라인" 을 붙인다.
+root.title(os.environ.get("KIDS_DIALOG_TITLE", "유튜브 키즈"))
 root.resizable(False, False)
 root.update_idletasks()
 w, h = 320, 230
@@ -34,8 +37,8 @@ tk.Checkbutton(frame, text="영상 자동 시작", variable=autoplay_var).grid(
 sat_frame = tk.Frame(frame)
 sat_frame.grid(row=2, column=0, columnspan=2, sticky='ew', pady=4)
 tk.Label(sat_frame, text="화면 채도:").pack(side='left')
-sat_var = tk.IntVar(value=20)
-sat_label = tk.Label(sat_frame, text="20%", width=4)
+sat_var = tk.IntVar(value=100)
+sat_label = tk.Label(sat_frame, text="100%", width=4)
 sat_label.pack(side='right')
 def on_sat_change(val):
     sat_label.config(text=f"{int(float(val))}%")

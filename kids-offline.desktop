@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=유튜브 키즈 - 오프라인
+Comment=인터넷 없이 저장된 영상으로 시청 시간을 설정하고 시작합니다 (비상탈출: Ctrl+Alt+K)
+Exec=/home/jjejje/kids-machine/kids-offline.sh
+Icon=video-x-generic
+Terminal=false
+Categories=Education;
